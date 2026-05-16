@@ -17,6 +17,16 @@ static int is_valid_side(DraughtsSide side)
     return side == DRAUGHTS_BLACK || side == DRAUGHTS_WHITE;
 }
 
+static int is_black_piece(DraughtsPiece piece)
+{
+    return piece == DRAUGHTS_BLACK_MAN || piece == DRAUGHTS_BLACK_KING;
+}
+
+static int is_white_piece(DraughtsPiece piece)
+{
+    return piece == DRAUGHTS_WHITE_MAN || piece == DRAUGHTS_WHITE_KING;
+}
+
 int draughts_is_playable_coord(int row, int col)
 {
     if (row < 0 || row >= DRAUGHTS_BOARD_ROWS || col < 0 || col >= DRAUGHTS_BOARD_COLS) {
@@ -149,6 +159,9 @@ int draughts_get_side_to_move(const DraughtsState *state, DraughtsSide *side)
     if (state == NULL || side == NULL) {
         return DRAUGHTS_ERR_NULL;
     }
+    if (!is_valid_side((DraughtsSide)state->side_to_move)) {
+        return DRAUGHTS_ERR_INVALID_SIDE;
+    }
 
     *side = (DraughtsSide)state->side_to_move;
 
@@ -185,4 +198,56 @@ char draughts_piece_to_char(DraughtsPiece piece)
     default:
         return '?';
     }
+}
+
+int draughts_get_game_result(const DraughtsState *state, DraughtsGameResult *result)
+{
+    DraughtsMove move;
+    DraughtsSide side;
+    int move_count = 0;
+    int black_count = 0;
+    int white_count = 0;
+    int i;
+    int move_result;
+
+    if (state == NULL || result == NULL) {
+        return DRAUGHTS_ERR_NULL;
+    }
+    if (draughts_get_side_to_move(state, &side) != DRAUGHTS_OK) {
+        return DRAUGHTS_ERR_INVALID_SIDE;
+    }
+
+    for (i = 0; i < DRAUGHTS_SQUARE_COUNT; ++i) {
+        DraughtsPiece piece = (DraughtsPiece)state->squares[i];
+
+        if (!is_valid_piece(piece)) {
+            return DRAUGHTS_ERR_INVALID_PIECE;
+        }
+        if (is_black_piece(piece)) {
+            ++black_count;
+        } else if (is_white_piece(piece)) {
+            ++white_count;
+        }
+    }
+
+    if (black_count == 0) {
+        *result = DRAUGHTS_GAME_WHITE_WIN;
+        return DRAUGHTS_OK;
+    }
+    if (white_count == 0) {
+        *result = DRAUGHTS_GAME_BLACK_WIN;
+        return DRAUGHTS_OK;
+    }
+
+    move_result = draughts_generate_legal_moves(state, &move, 1, &move_count);
+    if (move_result != DRAUGHTS_OK && move_result != DRAUGHTS_ERR_BUFFER_TOO_SMALL) {
+        return move_result;
+    }
+    if (move_count == 0) {
+        *result = side == DRAUGHTS_BLACK ? DRAUGHTS_GAME_WHITE_WIN : DRAUGHTS_GAME_BLACK_WIN;
+        return DRAUGHTS_OK;
+    }
+
+    *result = DRAUGHTS_GAME_ONGOING;
+    return DRAUGHTS_OK;
 }

@@ -125,6 +125,84 @@ static void test_get_set_clear_and_copy(void)
     CHECK(draughts_set_piece(&state, 51, DRAUGHTS_EMPTY) == DRAUGHTS_ERR_INVALID_SQUARE);
     CHECK(draughts_set_piece(&state, 1, (DraughtsPiece)99) == DRAUGHTS_ERR_INVALID_PIECE);
     CHECK(draughts_set_side_to_move(&state, (DraughtsSide)99) == DRAUGHTS_ERR_INVALID_SIDE);
+    state.side_to_move = 99;
+    CHECK(draughts_get_side_to_move(&state, &side) == DRAUGHTS_ERR_INVALID_SIDE);
+}
+
+static void test_game_result_by_material(void)
+{
+    DraughtsState state;
+    DraughtsGameResult result;
+
+    CHECK(draughts_clear(&state) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 31, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_get_game_result(&state, &result) == DRAUGHTS_OK);
+    CHECK(result == DRAUGHTS_GAME_WHITE_WIN);
+
+    CHECK(draughts_clear(&state) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 20, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_get_game_result(&state, &result) == DRAUGHTS_OK);
+    CHECK(result == DRAUGHTS_GAME_BLACK_WIN);
+}
+
+static void test_game_result_ongoing_when_current_side_has_move(void)
+{
+    DraughtsState state;
+    DraughtsGameResult result;
+
+    CHECK(draughts_clear(&state) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 16, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 50, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+
+    CHECK(draughts_get_game_result(&state, &result) == DRAUGHTS_OK);
+    CHECK(result == DRAUGHTS_GAME_ONGOING);
+
+    CHECK(draughts_clear(&state) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 28, DRAUGHTS_BLACK_KING) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 1, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_get_game_result(&state, &result) == DRAUGHTS_OK);
+    CHECK(result == DRAUGHTS_GAME_ONGOING);
+}
+
+static void test_game_result_current_side_no_legal_move_loses(void)
+{
+    DraughtsState state;
+    DraughtsGameResult result;
+
+    CHECK(draughts_clear(&state) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 46, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 1, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_get_game_result(&state, &result) == DRAUGHTS_OK);
+    CHECK(result == DRAUGHTS_GAME_WHITE_WIN);
+
+    CHECK(draughts_set_side_to_move(&state, DRAUGHTS_WHITE) == DRAUGHTS_OK);
+    CHECK(draughts_get_game_result(&state, &result) == DRAUGHTS_OK);
+    CHECK(result == DRAUGHTS_GAME_BLACK_WIN);
+
+    CHECK(draughts_clear(&state) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 46, DRAUGHTS_BLACK_KING) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 41, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 47, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 1, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_get_game_result(&state, &result) == DRAUGHTS_OK);
+    CHECK(result == DRAUGHTS_GAME_WHITE_WIN);
+}
+
+static void test_game_result_invalid_arguments_and_state(void)
+{
+    DraughtsState state;
+    DraughtsGameResult result;
+
+    CHECK(draughts_init(&state) == DRAUGHTS_OK);
+    CHECK(draughts_get_game_result(NULL, &result) == DRAUGHTS_ERR_NULL);
+    CHECK(draughts_get_game_result(&state, NULL) == DRAUGHTS_ERR_NULL);
+
+    state.side_to_move = 99;
+    CHECK(draughts_get_game_result(&state, &result) == DRAUGHTS_ERR_INVALID_SIDE);
+
+    CHECK(draughts_init(&state) == DRAUGHTS_OK);
+    state.squares[0] = 99;
+    CHECK(draughts_get_game_result(&state, &result) == DRAUGHTS_ERR_INVALID_PIECE);
 }
 
 int main(void)
@@ -132,6 +210,10 @@ int main(void)
     test_square_mapping();
     test_initial_position();
     test_get_set_clear_and_copy();
+    test_game_result_by_material();
+    test_game_result_ongoing_when_current_side_has_move();
+    test_game_result_current_side_no_legal_move_loses();
+    test_game_result_invalid_arguments_and_state();
 
     if (failures != 0) {
         printf("%d test failure(s)\n", failures);

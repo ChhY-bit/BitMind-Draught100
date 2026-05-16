@@ -21,7 +21,8 @@ typedef enum {
     DRAUGHTS_ERR_INVALID_PIECE = -4,
     DRAUGHTS_ERR_INVALID_SIDE = -5,
     DRAUGHTS_ERR_BUFFER_TOO_SMALL = -6,
-    DRAUGHTS_ERR_INVALID_ARGUMENT = -7
+    DRAUGHTS_ERR_INVALID_ARGUMENT = -7,
+    DRAUGHTS_ERR_INVALID_MOVE = -8
 } DraughtsResult;
 
 typedef enum {
@@ -36,6 +37,13 @@ typedef enum {
     DRAUGHTS_BLACK = 0,
     DRAUGHTS_WHITE = 1
 } DraughtsSide;
+
+typedef enum {
+    DRAUGHTS_GAME_ONGOING = 0,
+    DRAUGHTS_GAME_BLACK_WIN = 1,
+    DRAUGHTS_GAME_WHITE_WIN = 2,
+    DRAUGHTS_GAME_DRAW = 3
+} DraughtsGameResult;
 
 typedef struct {
     unsigned char squares[DRAUGHTS_SQUARE_COUNT];
@@ -125,6 +133,18 @@ int draughts_generate_legal_moves(
     int max_moves,
     int *move_count
 );
+
+/*
+ * Input: state is a valid board state and move is a generated or structurally valid move.
+ * Output: applies the move, removes captured pieces, promotes men on final back rank, and switches side.
+ */
+int draughts_apply_move(DraughtsState *state, const DraughtsMove *move);
+
+/*
+ * Input: state is a valid board state.
+ * Output: writes the current game result based on material and current-side legal moves.
+ */
+int draughts_get_game_result(const DraughtsState *state, DraughtsGameResult *result);
 
 #ifdef __cplusplus
 }
