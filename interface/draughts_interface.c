@@ -93,6 +93,16 @@ int draughts_env_reset(DraughtsEnvHandle *env, DraughtsObservation *observation)
     return DRAUGHTS_OK;
 }
 
+int draughts_env_copy(DraughtsEnvHandle *dst, const DraughtsEnvHandle *src)
+{
+    if (dst == NULL || src == NULL) {
+        return DRAUGHTS_ERR_NULL;
+    }
+
+    *dst = *src;
+    return DRAUGHTS_OK;
+}
+
 int draughts_env_get_observation(const DraughtsEnvHandle *env, DraughtsObservation *observation)
 {
     return fill_observation(env, observation);

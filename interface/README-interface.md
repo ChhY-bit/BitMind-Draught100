@@ -485,6 +485,7 @@ moves = env.legal_moves()
 | `env.legal_move_count()` | `int` | 快速查看动作数量 | 返回当前局面的合法动作数量。 |
 | `env.legal_moves()` | `list[Move]` | 选择动作前查看可选动作 | 返回当前所有合法动作。 |
 | `env.step(action_id)` | `(dict, dict)` | 执行动作 | 执行编号为 `action_id` 的合法动作，返回新 observation 和 info。 |
+| `env.clone()` | `DraughtsEnv` | 复制环境 | 通过 C 侧结构体复制当前局面和合法动作缓存，常用于搜索或试走。 |
 | `env.render_text()` | `str` | 人眼检查棋盘 | 返回一个简单文本棋盘，可用 `print(env.render_text())` 打印。 |
 
 ### `Move` 字段

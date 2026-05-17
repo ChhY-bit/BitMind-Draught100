@@ -32,6 +32,15 @@ class DraughtsInterfaceTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             env.step(999)
 
+    def test_clone_copies_environment_independently(self):
+        env = DraughtsEnv()
+        env.step(0)
+        cloned = env.clone()
+
+        self.assertEqual(env.observation(), cloned.observation())
+        cloned.step(0)
+        self.assertNotEqual(env.observation(), cloned.observation())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -37,6 +37,12 @@ typedef struct {
 int draughts_env_reset(DraughtsEnvHandle *env, DraughtsObservation *observation);
 
 /*
+ * Input: dst and src point to environment storage.
+ * Output: copies the complete C environment, including state and cached legal moves.
+ */
+int draughts_env_copy(DraughtsEnvHandle *dst, const DraughtsEnvHandle *src);
+
+/*
  * Input: env points to a current environment, observation points to writable storage.
  * Output: copies a compact observation from the C environment.
  */

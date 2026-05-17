@@ -111,6 +111,12 @@ def _load_library(library_path: Optional[str]) -> ctypes.CDLL:
     ]
     lib.draughts_env_reset.restype = ctypes.c_int
 
+    lib.draughts_env_copy.argtypes = [
+        ctypes.POINTER(_DraughtsEnvHandle),
+        ctypes.POINTER(_DraughtsEnvHandle),
+    ]
+    lib.draughts_env_copy.restype = ctypes.c_int
+
     lib.draughts_env_get_observation.argtypes = [
         ctypes.POINTER(_DraughtsEnvHandle),
         ctypes.POINTER(_DraughtsObservation),
@@ -170,6 +176,7 @@ class DraughtsEnv:
 
     def __init__(self, library_path: Optional[str] = None) -> None:
         self._lib = _load_library(library_path)
+        self._library_path = library_path
         self._env = _DraughtsEnvHandle()
         self.reset()
 
@@ -231,6 +238,18 @@ class DraughtsEnv:
             "legal_move_count": int(step_result.legal_move_count),
         }
         return _observation_to_dict(observation), info
+
+    def clone(self) -> "DraughtsEnv":
+        cloned = self.__class__.__new__(self.__class__)
+        cloned._lib = self._lib
+        cloned._library_path = self._library_path
+        cloned._env = _DraughtsEnvHandle()
+        result = self._lib.draughts_env_copy(
+            ctypes.byref(cloned._env),
+            ctypes.byref(self._env),
+        )
+        _check_result(result, "draughts_env_copy")
+        return cloned
 
     def render_text(self) -> str:
         observation = self.observation()

@@ -1,0 +1,454 @@
+from __future__ import annotations
+
+import random
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence
+
+from draughts_env import Move
+
+DEFAULT_MATERIAL_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "material.yaml"
+DEFAULT_ALPHABETA_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "alphabeta.yaml"
+
+BLACK_WIN = 1
+WHITE_WIN = 2
+DRAW = 3
+ONGOING = 0
+NEG_INF = -10**12
+POS_INF = 10**12
+
+
+class Agent:
+    name = "agent"
+
+    def select_action(
+        self,
+        observation: Dict[str, object],
+        legal_actions: Sequence[Move],
+        env=None,
+    ) -> int:
+        raise NotImplementedError
+
+
+@dataclass
+class RandomAgent(Agent):
+    seed: Optional[int] = None
+    name: str = "random"
+
+    def __post_init__(self) -> None:
+        self._rng = random.Random(self.seed)
+
+    def select_action(
+        self,
+        observation: Dict[str, object],
+        legal_actions: Sequence[Move],
+        env=None,
+    ) -> int:
+        if not legal_actions:
+            raise ValueError("RandomAgent received no legal actions")
+        return self._rng.choice(list(legal_actions)).action_id
+
+
+@dataclass
+class GreedyCaptureAgent(Agent):
+    seed: Optional[int] = None
+    name: str = "greedy"
+
+    def __post_init__(self) -> None:
+        self._rng = random.Random(self.seed)
+
+    def select_action(
+        self,
+        observation: Dict[str, object],
+        legal_actions: Sequence[Move],
+        env=None,
+    ) -> int:
+        if not legal_actions:
+            raise ValueError("GreedyCaptureAgent received no legal actions")
+
+        best_capture_count = max(len(move.captures) for move in legal_actions)
+        candidates = [
+            move for move in legal_actions if len(move.captures) == best_capture_count
+        ]
+
+        best_promotion_score = max(promotion_score(move, observation) for move in candidates)
+        candidates = [
+            move for move in candidates if promotion_score(move, observation) == best_promotion_score
+        ]
+
+        return self._rng.choice(candidates).action_id
+
+
+@dataclass
+class MaterialConfig:
+    man_value: int = 100
+    king_value: int = 250
+    win_value: int = 1_000_000
+    draw_value: int = 0
+
+
+@dataclass
+class AlphaBetaConfig:
+    search_depth: int = 2
+    man_value: int = 100
+    king_value: int = 250
+    win_value: int = 1_000_000
+    draw_value: int = 0
+    advancement_value: int = 4
+    center_value: int = 3
+    edge_penalty: int = 2
+    back_row_guard_value: int = 5
+
+    def material_config(self) -> MaterialConfig:
+        return MaterialConfig(
+            man_value=self.man_value,
+            king_value=self.king_value,
+            win_value=self.win_value,
+            draw_value=self.draw_value,
+        )
+
+
+@dataclass
+class MaterialAgent(Agent):
+    seed: Optional[int] = None
+    config_path: Optional[str] = None
+    name: str = "material"
+
+    def __post_init__(self) -> None:
+        self._rng = random.Random(self.seed)
+        self.config = load_material_config(self.config_path)
+
+    def select_action(
+        self,
+        observation: Dict[str, object],
+        legal_actions: Sequence[Move],
+        env=None,
+    ) -> int:
+        if not legal_actions:
+            raise ValueError("MaterialAgent received no legal actions")
+        if env is None:
+            raise ValueError("MaterialAgent requires an environment with clone()")
+
+        side_to_move = int(observation["side_to_move"])
+        scored_moves = []
+        for move in legal_actions:
+            cloned = env.clone()
+            cloned.step(move.action_id)
+            score = evaluate_after_move(cloned.raw_observation(), side_to_move, self.config)
+            scored_moves.append((score, move))
+
+        best_score = max(score for score, _move in scored_moves)
+        candidates = [move for score, move in scored_moves if score == best_score]
+        return self._rng.choice(candidates).action_id
+
+
+@dataclass
+class AlphaBetaAgent(Agent):
+    seed: Optional[int] = None
+    config_path: Optional[str] = None
+    name: str = "alphabeta"
+
+    def __post_init__(self) -> None:
+        self._rng = random.Random(self.seed)
+        self.config = load_alphabeta_config(self.config_path)
+        self.material_config = self.config.material_config()
+
+    def select_action(
+        self,
+        observation: Dict[str, object],
+        legal_actions: Sequence[Move],
+        env=None,
+    ) -> int:
+        if not legal_actions:
+            raise ValueError("AlphaBetaAgent received no legal actions")
+        if env is None:
+            raise ValueError("AlphaBetaAgent requires an environment with clone()")
+
+        root_side = int(observation["side_to_move"])
+        scored_moves = []
+        ordered_actions = order_moves(legal_actions, observation)
+        for move in ordered_actions:
+            cloned = env.clone()
+            cloned.step(move.action_id)
+            score = self._search(
+                cloned,
+                depth=self.config.search_depth - 1,
+                root_side=root_side,
+                alpha=NEG_INF,
+                beta=POS_INF,
+            )
+            scored_moves.append((score, move))
+
+        best_score = max(score for score, _move in scored_moves)
+        candidates = [move for score, move in scored_moves if score == best_score]
+        return self._rng.choice(candidates).action_id
+
+    def _search(
+        self,
+        env,
+        depth: int,
+        root_side: int,
+        alpha: int,
+        beta: int,
+    ) -> int:
+        observation = env.raw_observation()
+        result = int(observation["game_result"])
+        if depth <= 0 or result != ONGOING:
+            return evaluate_enhanced_position(observation, root_side, self.config)
+
+        legal_actions = env.legal_actions()
+        if not legal_actions:
+            return evaluate_enhanced_position(observation, root_side, self.config)
+
+        side_to_move = int(observation["side_to_move"])
+        ordered_actions = order_moves(legal_actions, observation)
+        if side_to_move == root_side:
+            value = NEG_INF
+            for move in ordered_actions:
+                cloned = env.clone()
+                cloned.step(move.action_id)
+                value = max(
+                    value,
+                    self._search(cloned, depth - 1, root_side, alpha, beta),
+                )
+                alpha = max(alpha, value)
+                if alpha >= beta:
+                    break
+            return value
+
+        value = POS_INF
+        for move in ordered_actions:
+            cloned = env.clone()
+            cloned.step(move.action_id)
+            value = min(
+                value,
+                self._search(cloned, depth - 1, root_side, alpha, beta),
+            )
+            beta = min(beta, value)
+            if alpha >= beta:
+                break
+        return value
+
+
+def promotion_score(move: Move, observation: Dict[str, object]) -> int:
+    squares = observation["squares"]
+    side_to_move = int(observation["side_to_move"])
+    start = move.path[0]
+    final = move.path[-1]
+    moving_piece = int(squares[start - 1])
+    final_row = (final - 1) // 5
+
+    if side_to_move == 0 and moving_piece == 1 and final_row == 9:
+        return 1
+    if side_to_move == 1 and moving_piece == 3 and final_row == 0:
+        return 1
+    return 0
+
+
+def evaluate_after_move(
+    observation: Dict[str, object],
+    actor_side: int,
+    config: Optional[MaterialConfig] = None,
+) -> int:
+    return evaluate_position(observation, actor_side, config)
+
+
+def evaluate_position(
+    observation: Dict[str, object],
+    side: int,
+    config: Optional[MaterialConfig] = None,
+) -> int:
+    material_config = config or MaterialConfig()
+    result = int(observation["game_result"])
+    if result == BLACK_WIN:
+        return material_config.win_value if side == 0 else -material_config.win_value
+    if result == WHITE_WIN:
+        return material_config.win_value if side == 1 else -material_config.win_value
+    if result == DRAW:
+        return material_config.draw_value
+    return material_score_for_side(observation, side, material_config)
+
+
+def material_score_for_side(
+    observation: Dict[str, object],
+    side: int,
+    config: Optional[MaterialConfig] = None,
+) -> int:
+    material_config = config or MaterialConfig()
+    black_score = 0
+    white_score = 0
+    for piece in observation["squares"]:
+        if piece == 1:
+            black_score += material_config.man_value
+        elif piece == 2:
+            black_score += material_config.king_value
+        elif piece == 3:
+            white_score += material_config.man_value
+        elif piece == 4:
+            white_score += material_config.king_value
+
+    return black_score - white_score if side == 0 else white_score - black_score
+
+
+def evaluate_enhanced_position(
+    observation: Dict[str, object],
+    side: int,
+    config: AlphaBetaConfig,
+) -> int:
+    result = int(observation["game_result"])
+    if result == BLACK_WIN:
+        return config.win_value if side == 0 else -config.win_value
+    if result == WHITE_WIN:
+        return config.win_value if side == 1 else -config.win_value
+    if result == DRAW:
+        return config.draw_value
+
+    black_score = 0
+    white_score = 0
+    for index, piece in enumerate(observation["squares"], start=1):
+        row, col = square_to_coord(index)
+        if piece == 1:
+            black_score += evaluate_man_features(row, col, 0, config)
+        elif piece == 2:
+            black_score += evaluate_king_features(row, col, config)
+        elif piece == 3:
+            white_score += evaluate_man_features(row, col, 1, config)
+        elif piece == 4:
+            white_score += evaluate_king_features(row, col, config)
+
+    return black_score - white_score if side == 0 else white_score - black_score
+
+
+def evaluate_man_features(row: int, col: int, side: int, config: AlphaBetaConfig) -> int:
+    score = config.man_value
+    advancement = row if side == 0 else 9 - row
+    score += advancement * config.advancement_value
+    if is_center_square(row, col):
+        score += config.center_value
+    if is_edge_square(col):
+        score -= config.edge_penalty
+    if (side == 0 and row == 0) or (side == 1 and row == 9):
+        score += config.back_row_guard_value
+    return score
+
+
+def evaluate_king_features(row: int, col: int, config: AlphaBetaConfig) -> int:
+    score = config.king_value
+    if is_center_square(row, col):
+        score += config.center_value
+    if is_edge_square(col):
+        score -= config.edge_penalty
+    return score
+
+
+def square_to_coord(square_id: int) -> tuple[int, int]:
+    zero_based = square_id - 1
+    row = zero_based // 5
+    offset = zero_based % 5
+    col = offset * 2 + (1 if row % 2 == 0 else 0)
+    return row, col
+
+
+def is_center_square(row: int, col: int) -> bool:
+    return 2 <= row <= 7 and 2 <= col <= 7
+
+
+def is_edge_square(col: int) -> bool:
+    return col == 0 or col == 9
+
+
+def load_material_config(config_path: Optional[str] = None) -> MaterialConfig:
+    path = Path(config_path) if config_path is not None else DEFAULT_MATERIAL_CONFIG_PATH
+    default_config = MaterialConfig()
+    values = load_integer_yaml(
+        path,
+        {
+            "man_value": default_config.man_value,
+            "king_value": default_config.king_value,
+            "win_value": default_config.win_value,
+            "draw_value": default_config.draw_value,
+        },
+        "material",
+    )
+    return MaterialConfig(**values)
+
+
+def load_alphabeta_config(config_path: Optional[str] = None) -> AlphaBetaConfig:
+    path = Path(config_path) if config_path is not None else DEFAULT_ALPHABETA_CONFIG_PATH
+    default_config = AlphaBetaConfig()
+    values = load_integer_yaml(
+        path,
+        {
+            "search_depth": default_config.search_depth,
+            "man_value": default_config.man_value,
+            "king_value": default_config.king_value,
+            "win_value": default_config.win_value,
+            "draw_value": default_config.draw_value,
+            "advancement_value": default_config.advancement_value,
+            "center_value": default_config.center_value,
+            "edge_penalty": default_config.edge_penalty,
+            "back_row_guard_value": default_config.back_row_guard_value,
+        },
+        "alphabeta",
+    )
+    config = AlphaBetaConfig(**values)
+    if config.search_depth <= 0:
+        raise ValueError("alphabeta search_depth must be positive")
+    return config
+
+
+def load_integer_yaml(path: Path, defaults: Dict[str, int], config_name: str) -> Dict[str, int]:
+    values = {key: value for key, value in defaults.items()}
+
+    if not path.exists():
+        raise FileNotFoundError(f"{config_name} config not found: {path}")
+
+    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if ":" not in line:
+            raise ValueError(f"invalid config line {line_number}: {raw_line}")
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if key not in values:
+            raise ValueError(f"unknown {config_name} config key on line {line_number}: {key}")
+        try:
+            values[key] = int(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"{config_name} config value must be an integer on line {line_number}"
+            ) from exc
+
+    return values
+
+
+def order_moves(legal_actions: Sequence[Move], observation: Dict[str, object]) -> List[Move]:
+    return sorted(
+        legal_actions,
+        key=lambda move: (len(move.captures), promotion_score(move, observation)),
+        reverse=True,
+    )
+
+
+def make_agent(
+    name: str,
+    seed: Optional[int] = None,
+    material_config_path: Optional[str] = None,
+    alphabeta_config_path: Optional[str] = None,
+) -> Agent:
+    normalized = name.strip().lower()
+    if normalized == "random":
+        return RandomAgent(seed=seed)
+    if normalized in {"greedy", "greedy-capture", "capture"}:
+        return GreedyCaptureAgent(seed=seed)
+    if normalized in {"material", "material-agent"}:
+        return MaterialAgent(seed=seed, config_path=material_config_path)
+    if normalized in {"alphabeta", "alpha-beta", "ab"}:
+        return AlphaBetaAgent(seed=seed, config_path=alphabeta_config_path)
+    raise ValueError(f"unknown agent: {name}")
+
+
+def available_agents() -> List[str]:
+    return ["random", "greedy", "material", "alphabeta"]

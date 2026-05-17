@@ -46,12 +46,15 @@ class StandardDraughtsEnv:
         if max_actions <= 0:
             raise ValueError("max_actions must be positive")
 
+        self._library_path = library_path
         self._env = DraughtsEnv(library_path)
         self.max_actions = max_actions
         self._last_observation_dict = self._env.observation()
+        self._action_history: List[int] = []
 
     def reset(self) -> Observation:
         self._last_observation_dict = self._env.reset()
+        self._action_history = []
         return self.observation()
 
     def observation(self) -> Observation:
@@ -76,6 +79,7 @@ class StandardDraughtsEnv:
     def step(self, action_id: int) -> Tuple[Observation, int, bool, Dict[str, object]]:
         observation_dict, step_info = self._env.step(action_id)
         self._last_observation_dict = observation_dict
+        self._action_history.append(int(action_id))
 
         observation = encode_observation(observation_dict)
         reward = int(step_info["reward"])
@@ -97,6 +101,18 @@ class StandardDraughtsEnv:
 
     def render_text(self) -> str:
         return self._env.render_text()
+
+    def clone(self) -> "StandardDraughtsEnv":
+        cloned = self.__class__.__new__(self.__class__)
+        cloned._library_path = self._library_path
+        cloned._env = self._env.clone()
+        cloned.max_actions = self.max_actions
+        cloned._last_observation_dict = cloned._env.observation()
+        cloned._action_history = list(self._action_history)
+        return cloned
+
+    def action_history(self) -> List[int]:
+        return list(self._action_history)
 
 
 def encode_observation(observation: Dict[str, object]) -> Observation:

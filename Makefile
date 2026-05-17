@@ -66,7 +66,7 @@ interface-test: interface
 	PYTHONPATH=interface python3 -m unittest interface/test_interface.py
 
 trainer-test: interface
-	PYTHONPATH=interface:trainer python3 -m unittest trainer/test_env.py
+	PYTHONPATH=interface:trainer python3 -m unittest trainer/test_env.py trainer/test_agents.py trainer/test_arena.py
 
 clean:
 	rm -rf $(BUILD_DIR)

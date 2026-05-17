@@ -47,6 +47,19 @@ class StandardDraughtsEnvTests(unittest.TestCase):
         self.assertEqual(channel_sum(observation, 2), 20)
         self.assertEqual(channel_sum(observation, 5), 50)
 
+    def test_clone_replays_history_without_mutating_original(self):
+        env = StandardDraughtsEnv()
+        env.reset()
+        env.step(0)
+        cloned = env.clone()
+
+        self.assertEqual(env.action_history(), cloned.action_history())
+        self.assertEqual(env.raw_observation(), cloned.raw_observation())
+
+        cloned.step(0)
+        self.assertEqual(len(env.action_history()), 1)
+        self.assertEqual(len(cloned.action_history()), 2)
+
     def test_square_to_coord_uses_project_numbering(self):
         self.assertEqual(square_to_coord(1), (0, 1))
         self.assertEqual(square_to_coord(6), (1, 0))

@@ -15,6 +15,7 @@ C 底层引擎已形成可测试、可调试的第一版规则内核。实现集
 - `interface/`：C-Python 接口层，包含 C 侧粗粒度环境封装和 Python `ctypes` 包装。
 - `gui/simple_gui.py`：Python GUI v0，人-人模式，点击棋子与落点执行动作。
 - `trainer/env.py`：训练用标准化环境，包装 C-Python 接口并输出固定 observation 与 action mask。
+- `trainer/agents.py`、`trainer/arena.py`：基础 agent 与批量对战评测器。
 
 ## 已实现规则
 
@@ -46,7 +47,16 @@ Python 侧优先使用 `interface.DraughtsEnv`，通过 `reset()`、`legal_moves
 
 GUI 侧通过同一个 Python 接口推进棋局。当前已实现人-人、人-随机AI、随机AI-人、随机AI-随机AI模式；启动和新建对局时可选择双方决策源。人类方使用点击棋子、显示落点、点击落点或双击动作列表执行；随机AI方从当前合法动作中随机选取。左侧显示棋谱，右侧含中文状态、合法动作和彩色日志框，王棋统一显示为 `K`。GUI 已支持悔棋，方式是重置 C 环境并重放动作历史。
 
-训练侧已新增 `StandardDraughtsEnv`：提供 `reset()`、`step(action_id)`、`observation()`、`legal_actions()`、`action_mask()`。当前 observation 为 `6x10x10` 嵌套列表，通道分别为当前方普通子、当前方王、对方普通子、对方王、合法棋位、当前行棋方平面；action mask 长度为 `512`。
+训练侧当前处于“传统搜索基线 + 标准环境”阶段：
+
+- `trainer/env.py`：`StandardDraughtsEnv` 包装 `interface.DraughtsEnv`，提供 `reset()`、`step(action_id)`、`observation()`、`raw_observation()`、`legal_actions()`、`action_mask()`、`clone()`。`clone()` 依赖 C 侧环境结构体直接复制，不再从开局重放历史。
+- observation 为 `6x10x10` 嵌套列表：当前方普通子、当前方王、对方普通子、对方王、合法棋位、当前行棋方平面。当前不做棋盘翻转。
+- action 仍是“当前局面合法动作列表编号”，不是全局固定动作空间；`action_mask` 长度为 `512`，当前合法动作位置为 `1`。
+- `trainer/agents.py`：已有 `RandomAgent`、`GreedyCaptureAgent`、`MaterialAgent`、`AlphaBetaAgent`。所有 agent 都只通过环境接口读取局面和执行动作，规则逻辑仍在 C 内。
+- `MaterialAgent`：一步试走型材料评估，逐个 `clone()` 并 `step()` 当前合法动作，按 `trainer/config/material.yaml` 的普通子、王、胜局、和棋分值评分。
+- `AlphaBetaAgent`：传统 Alpha-Beta 搜索基线，默认深度在 `trainer/config/alphabeta.yaml`。搜索只调用 `env.clone()` 与 `env.step()`；叶子局面用增强静态评估，特征包括材料、普通子推进、中心控制、边线惩罚、底线守卫。暂未加入机动性/威胁检测，因为这会频繁生成额外合法动作并拖慢 Python 搜索。
+- `trainer/arena.py`：批量评测器，支持 `--black/--white random|greedy|material|alphabeta`、`--material-config`、`--alphabeta-config`，统计胜负、达到最大步数局数、平均半回合数和耗时。
+- 经验现象：`AlphaBetaAgent` 默认深度 2 明显强于 `random/material`，对 `alphabeta` 自战则互有胜负；速度比随机慢得多但可作为早期强基线和后续监督学习老师。
 
 ## 测试状态
 
@@ -60,7 +70,7 @@ make trainer-test
 build/random_play 10000 300 2000 1
 ```
 
-测试覆盖棋盘编号、初始化、复制、终局、普通子移动/吃子/连跳、王移动/吃子/连跳、最多吃子、屏障、升王、严格动作校验、非法参数与随机对局。
+测试覆盖棋盘编号、初始化、复制、终局、普通子移动/吃子/连跳、王移动/吃子/连跳、最多吃子、屏障、升王、严格动作校验、非法参数与随机对局。训练侧测试覆盖 observation/action mask、环境 clone、基础 agent、YAML 配置读取、Material 一步评估、AlphaBeta 深度搜索、增强评估的推进/中心/边线特征，以及 arena 冒烟运行。
 
 随机测试曾发现并修复一个重要边界：王连跳可以合法回到出发格，执行器不能因起点等于终点而拒绝该动作。
 
@@ -87,11 +97,11 @@ PYTHONPATH=interface python3 gui/simple_gui.py
 
 ## 未完成事项
 
-- 基础 agent 与批量评测器。
 - GUI 的模型AI接入。
 - 更大规模的复杂残局回归测试。
+- AlphaBeta 的走法排序、缓存、限时搜索，以及机动性/威胁等更昂贵评估特征。
 - 和棋规则暂按当前讨论结果忽略。
 
 ## 建议下一步
 
-可以继续实现 `trainer/agents.py` 与 `trainer/arena.py`，建立随机、贪心、材料评估等基础 agent 及批量对战评测能力。
+可以继续优化 AlphaBeta 的走法排序、缓存和限时搜索；之后开始准备监督学习数据生成，让搜索 agent 充当早期老师。

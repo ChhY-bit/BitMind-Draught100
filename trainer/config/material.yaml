@@ -1,0 +1,5 @@
+# MaterialAgent evaluation parameters.
+man_value: 100
+king_value: 250
+win_value: 1000000
+draw_value: 0
