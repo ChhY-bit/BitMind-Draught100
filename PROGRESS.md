@@ -1,138 +1,97 @@
 # 项目进度记录
 
-本文档用于压缩记录当前实现状态。详细规则以 `SPEC.md` 为准，编码规范以 `AGENTS.md` 为准。
+本文档只保留阶段性摘要，详细规则以 `SPEC.md` 为准，工程约束以 `AGENTS.md` 为准。
 
-## 1. 当前结构
+## 当前阶段
 
-```text
-Makefile
-engine/include/draughts.h
-engine/src/board.c
-engine/src/move.c
-engine/tests/test_board.c
-engine/tests/test_moves.c
-engine/tools/board_viewer.c
-```
+C 底层引擎已形成可测试、可调试的第一版规则内核。实现集中在 `engine/`：
 
-- `engine/include/draughts.h`：当前 C 引擎公共接口。
-- `engine/src/board.c`：棋盘、局面状态、终局判断。
-- `engine/src/move.c`：合法动作生成与动作执行。
-- `engine/tests/`：C 单元测试。
-- `engine/tools/board_viewer.c`：临时文本可视化工具。
+- `include/draughts.h`：公共接口与基础数据结构。
+- `src/board.c`：棋盘编号、局面状态、状态复制、终局判断。
+- `src/move.c`：合法动作生成、动作严格校验、动作执行。
+- `tests/test_board.c`、`tests/test_moves.c`：单元测试。
+- `tests/random_play.c`：随机对局压力测试。
+- `tools/board_viewer.c`：临时文本棋盘、固定场景与简易命令行对局器。
+- `interface/`：C-Python 接口层，包含 C 侧粗粒度环境封装和 Python `ctypes` 包装。
+- `gui/simple_gui.py`：Python GUI v0，人-人模式，点击棋子与落点执行动作。
+- `trainer/env.py`：训练用标准化环境，包装 C-Python 接口并输出固定 observation 与 action mask。
 
-## 2. 核心约定
+## 已实现规则
 
-- 棋盘为 `10x10`，只使用 50 个合理棋位。
-- 对外棋位编号为 `1-50`，内部数组下标为 `0-49`。
-- 编号从最上方一行开始，逐行从左到右；左上角不是合理棋位。
-- 黑方初始在 `1-20`，白方初始在 `31-50`，`21-30` 为空。
-- 黑方先手。黑普通子向下走，白普通子向上走。
-- 普通子吃子可向四个对角方向。
-- 吃子优先；多条吃子路线只保留吃子数最多者；同为最多则全部保留。
-- 整着结束前，被吃棋子不从虚拟棋盘移除，仍作为屏障，且不能重复跳过。
+- 100 格国际跳棋棋盘，外部棋位编号为 `1-50`，内部数组为 `0-49`。
+- 初始局面：黑方 `1-20`，白方 `31-50`，黑方先手。
+- 普通子：非吃子只能向前，吃子可四向，支持连跳。
+- 王：支持远程普通移动、远程吃子、多个落点与连跳。
+- 吃子强制；所有普通子和王共同参与“最多吃子”规则；同为最多的路线全部保留。
+- 被吃棋子在整着结束前仍作为屏障，且不能重复跳过。
+- 普通子最终停在对方底线才升王；跳吃经过底线但离开时不升王。
+- `draughts_apply_move` 已改为严格执行当前合法动作，不接受只满足结构但违反规则的动作。
+- 终局判断已支持无子、当前方无合法动作；和棋枚举保留，但和棋规则暂不实现。
 
-## 3. 已实现能力
+## 主要接口
 
-棋盘与状态：
+公共接口见 `engine/include/draughts.h`。当前核心接口包括：
 
-- 坐标与棋位编号互转。
-- 判断合理棋位。
-- 初始化、清空、复制局面。
-- 查询/设置棋子。
-- 查询/设置当前行棋方。
-- 非法参数、非法棋位、非法棋子、非法行棋方处理。
+- `draughts_init`、`draughts_clear`、`draughts_copy`
+- `draughts_get_piece`、`draughts_set_piece`
+- `draughts_get_side_to_move`、`draughts_set_side_to_move`
+- `draughts_generate_legal_moves`
+- `draughts_is_legal_move`
+- `draughts_apply_move`
+- `draughts_get_game_result`
 
-合法动作：
+`DraughtsMove` 使用完整路径 `path[]` 和被吃棋子列表 `captures[]` 表示普通移动、吃子与连跳。
 
-- 普通子非吃子移动。
-- 普通子吃子与连跳。
-- 王的远程非吃子移动。
-- 王的远程吃子与连跳。
-- 普通子和王的吃子统一参与最多吃子规则。
-- 合法动作生成支持调用方缓冲区，缓冲区不足时返回实际动作数量。
+Python 侧优先使用 `interface.DraughtsEnv`，通过 `reset()`、`legal_moves()`、`step(action_id)` 和 `observation()` 调用 C 环境接口。规则逻辑仍封闭在 C 内部。
 
-动作执行：
+GUI 侧通过同一个 Python 接口推进棋局。当前已实现人-人、人-随机AI、随机AI-人、随机AI-随机AI模式；启动和新建对局时可选择双方决策源。人类方使用点击棋子、显示落点、点击落点或双击动作列表执行；随机AI方从当前合法动作中随机选取。左侧显示棋谱，右侧含中文状态、合法动作和彩色日志框，王棋统一显示为 `K`。GUI 已支持悔棋，方式是重置 C 环境并重放动作历史。
 
-- 执行普通移动、吃子、连跳。
-- 移除被吃棋子。
-- 执行后切换行棋方。
-- 普通子最终停在对方底线时升王。
-- 普通子跳吃经过底线但最终离开底线时不升王。
+训练侧已新增 `StandardDraughtsEnv`：提供 `reset()`、`step(action_id)`、`observation()`、`legal_actions()`、`action_mask()`。当前 observation 为 `6x10x10` 嵌套列表，通道分别为当前方普通子、当前方王、对方普通子、对方王、合法棋位、当前行棋方平面；action mask 长度为 `512`。
 
-终局判断：
+## 测试状态
 
-- 无黑子则白胜。
-- 无白子则黑胜。
-- 当前行棋方无合法动作则对方胜。
-- 否则继续。
-- 和棋结果枚举已预留，但和棋规则尚未实现。
-
-## 4. 主要公共接口
-
-当前公共接口集中在 `engine/include/draughts.h`：
-
-```c
-int draughts_init(DraughtsState *state);
-int draughts_clear(DraughtsState *state);
-int draughts_copy(DraughtsState *dst, const DraughtsState *src);
-int draughts_get_piece(const DraughtsState *state, int square_id, DraughtsPiece *piece);
-int draughts_set_piece(DraughtsState *state, int square_id, DraughtsPiece piece);
-int draughts_generate_legal_moves(
-    const DraughtsState *state,
-    DraughtsMove *moves,
-    int max_moves,
-    int *move_count
-);
-int draughts_apply_move(DraughtsState *state, const DraughtsMove *move);
-int draughts_get_game_result(const DraughtsState *state, DraughtsGameResult *result);
-```
-
-`DraughtsMove` 使用完整路径和被吃棋子列表表达普通移动、吃子和连跳。
-
-## 5. 测试状态
-
-测试命令：
+常用命令：
 
 ```bash
 make test
+make random-test
+make interface-test
+make trainer-test
+build/random_play 10000 300 2000 1
 ```
 
-当前测试目标：
+测试覆盖棋盘编号、初始化、复制、终局、普通子移动/吃子/连跳、王移动/吃子/连跳、最多吃子、屏障、升王、严格动作校验、非法参数与随机对局。
 
-- `build/test_board`
-- `build/test_moves`
+随机测试曾发现并修复一个重要边界：王连跳可以合法回到出发格，执行器不能因起点等于终点而拒绝该动作。
 
-覆盖重点：
+## 临时调试工具
 
-- 棋盘编号、初始化、状态复制、查询/设置。
-- 普通子移动、吃子、连跳、最多吃子。
-- 王的远程移动、远程吃子、连跳、多个落点。
-- 被吃棋子作为屏障。
-- 动作执行、吃子移除、升王、切换行棋方。
-- 终局判断。
-- 缓冲区不足和非法参数。
+`board_viewer` 可查看编号、初始局面、固定测试场景、执行场景首个动作、批量场景，以及进入简易命令行对局器。它只是 C 端临时调试工具，不是正式 GUI。
 
-## 6. 临时工具
+常用命令：
 
 ```bash
+make tools
 build/board_viewer --ids
-build/board_viewer --initial
+build/board_viewer --scenarios
+build/board_viewer --scenario king-multi
+build/board_viewer --play initial
 ```
 
-该工具只用于文本预览棋位编号和初始棋盘，不是正式 GUI。
+Python GUI：
 
-## 7. 未完成事项
+```bash
+make interface
+PYTHONPATH=interface python3 gui/simple_gui.py
+```
 
-- 和棋规则。
-- 更严格的 `draughts_apply_move` 合法性校验，当前主要面向执行生成器产出的动作。
-- Python 绑定。
-- 强化学习环境封装。
-- 正式 Python GUI。
+## 未完成事项
 
-## 8. 建议下一步
+- 基础 agent 与批量评测器。
+- GUI 的模型AI接入。
+- 更大规模的复杂残局回归测试。
+- 和棋规则暂按当前讨论结果忽略。
 
-优先增强临时可视化/调试能力，让当前完整规则内核更容易人工验证：
+## 建议下一步
 
-- 给 `board_viewer` 增加打印当前局面的合法动作列表。
-- 增加一个简单命令行演示模式，执行若干固定动作或测试局面。
-- 后续再考虑 Python 绑定或正式 GUI。
+可以继续实现 `trainer/agents.py` 与 `trainer/arena.py`，建立随机、贪心、材料评估等基础 agent 及批量对战评测能力。

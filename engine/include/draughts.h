@@ -135,7 +135,17 @@ int draughts_generate_legal_moves(
 );
 
 /*
- * Input: state is a valid board state and move is a generated or structurally valid move.
+ * Input: state is a valid board state and move describes a candidate move.
+ * Output: writes 1 when move exactly matches one current legal move, otherwise 0.
+ */
+int draughts_is_legal_move(
+    const DraughtsState *state,
+    const DraughtsMove *move,
+    int *is_legal
+);
+
+/*
+ * Input: state is a valid board state and move is a current legal move.
  * Output: applies the move, removes captured pieces, promotes men on final back rank, and switches side.
  */
 int draughts_apply_move(DraughtsState *state, const DraughtsMove *move);

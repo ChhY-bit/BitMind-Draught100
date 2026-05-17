@@ -274,6 +274,37 @@ static void test_king_multi_capture_keeps_longest_routes(void)
     CHECK(!has_capture_move(moves, move_count, short_path, 2, short_captures, 1));
 }
 
+static void test_king_captured_piece_barrier_blocks_deeper_target(void)
+{
+    DraughtsState state;
+    DraughtsMove moves[8];
+    int move_count = -1;
+    const int path_14[] = { 28, 14 };
+    const int path_10[] = { 28, 10 };
+    const int path_5[] = { 28, 5 };
+    const int path_41[] = { 28, 41 };
+    const int path_46[] = { 28, 46 };
+    const int captures_19[] = { 19 };
+    const int captures_37[] = { 37 };
+    int i;
+
+    CHECK(draughts_clear(&state) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 28, DRAUGHTS_BLACK_KING) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 19, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 37, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+
+    CHECK(draughts_generate_legal_moves(&state, moves, 8, &move_count) == DRAUGHTS_OK);
+    CHECK(move_count == 5);
+    CHECK(has_capture_move(moves, move_count, path_14, 2, captures_19, 1));
+    CHECK(has_capture_move(moves, move_count, path_10, 2, captures_19, 1));
+    CHECK(has_capture_move(moves, move_count, path_5, 2, captures_19, 1));
+    CHECK(has_capture_move(moves, move_count, path_41, 2, captures_37, 1));
+    CHECK(has_capture_move(moves, move_count, path_46, 2, captures_37, 1));
+    for (i = 0; i < move_count; ++i) {
+        CHECK(moves[i].capture_count == 1);
+    }
+}
+
 static void test_king_capture_blockers(void)
 {
     DraughtsState state;
@@ -574,6 +605,68 @@ static void test_capture_buffer_too_small_reports_total_best_moves(void)
     CHECK(move_count == 2);
 }
 
+static void test_is_legal_move_accepts_generated_and_rejects_nonlegal(void)
+{
+    DraughtsState state;
+    DraughtsMove move;
+    int is_legal = -1;
+    const int valid_path[] = { 16, 21 };
+    const int wrong_direction_path[] = { 16, 11 };
+    const int mandatory_capture_quiet_path[] = { 24, 29 };
+    const int capture_path[] = { 21, 32 };
+    const int captures[] = { 27 };
+    const int invalid_square_path[] = { 16, 51 };
+
+    CHECK(draughts_init(&state) == DRAUGHTS_OK);
+    move = make_move(valid_path, 2, NULL, 0);
+    CHECK(draughts_is_legal_move(&state, &move, &is_legal) == DRAUGHTS_OK);
+    CHECK(is_legal == 1);
+
+    move = make_move(wrong_direction_path, 2, NULL, 0);
+    CHECK(draughts_is_legal_move(&state, &move, &is_legal) == DRAUGHTS_OK);
+    CHECK(is_legal == 0);
+
+    CHECK(draughts_clear(&state) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 21, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 24, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 27, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    move = make_move(capture_path, 2, captures, 1);
+    CHECK(draughts_is_legal_move(&state, &move, &is_legal) == DRAUGHTS_OK);
+    CHECK(is_legal == 1);
+    move = make_move(mandatory_capture_quiet_path, 2, NULL, 0);
+    CHECK(draughts_is_legal_move(&state, &move, &is_legal) == DRAUGHTS_OK);
+    CHECK(is_legal == 0);
+
+    move = make_move(invalid_square_path, 2, NULL, 0);
+    CHECK(draughts_is_legal_move(&state, &move, &is_legal) == DRAUGHTS_OK);
+    CHECK(is_legal == 0);
+}
+
+static void test_is_legal_move_rejects_shorter_capture_route(void)
+{
+    DraughtsState state;
+    DraughtsMove move;
+    int is_legal = -1;
+    const int long_path[] = { 22, 31, 42 };
+    const int long_captures[] = { 27, 37 };
+    const int short_path[] = { 22, 33 };
+    const int short_captures[] = { 28 };
+
+    CHECK(draughts_clear(&state) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 22, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 27, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 37, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 28, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+
+    move = make_move(long_path, 3, long_captures, 2);
+    CHECK(draughts_is_legal_move(&state, &move, &is_legal) == DRAUGHTS_OK);
+    CHECK(is_legal == 1);
+
+    move = make_move(short_path, 2, short_captures, 1);
+    CHECK(draughts_is_legal_move(&state, &move, &is_legal) == DRAUGHTS_OK);
+    CHECK(is_legal == 0);
+}
+
 static void test_apply_quiet_move_switches_side(void)
 {
     DraughtsState state;
@@ -648,6 +741,33 @@ static void test_apply_king_capture_removes_piece_and_keeps_king(void)
     CHECK(side_to_move_is(&state, DRAUGHTS_WHITE));
 }
 
+static void test_apply_king_capture_can_return_to_origin(void)
+{
+    DraughtsState state;
+    DraughtsMove move;
+    int is_legal = 0;
+    const int path[] = { 49, 38, 24, 35, 49 };
+    const int captures[] = { 43, 29, 30, 40 };
+
+    CHECK(draughts_clear(&state) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 49, DRAUGHTS_BLACK_KING) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 43, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 29, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 30, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 40, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    move = make_move(path, 5, captures, 4);
+
+    CHECK(draughts_is_legal_move(&state, &move, &is_legal) == DRAUGHTS_OK);
+    CHECK(is_legal == 1);
+    CHECK(draughts_apply_move(&state, &move) == DRAUGHTS_OK);
+    CHECK(piece_at(&state, 49, DRAUGHTS_BLACK_KING));
+    CHECK(piece_at(&state, 43, DRAUGHTS_EMPTY));
+    CHECK(piece_at(&state, 29, DRAUGHTS_EMPTY));
+    CHECK(piece_at(&state, 30, DRAUGHTS_EMPTY));
+    CHECK(piece_at(&state, 40, DRAUGHTS_EMPTY));
+    CHECK(side_to_move_is(&state, DRAUGHTS_WHITE));
+}
+
 static void test_apply_promotes_black_and_white_men_on_final_square(void)
 {
     DraughtsState state;
@@ -675,18 +795,18 @@ static void test_apply_does_not_promote_when_jump_only_passes_back_rank(void)
 {
     DraughtsState state;
     DraughtsMove move;
-    const int path[] = { 39, 50, 41 };
-    const int captures[] = { 44, 45 };
+    const int path[] = { 37, 48, 39 };
+    const int captures[] = { 42, 43 };
 
     CHECK(draughts_clear(&state) == DRAUGHTS_OK);
-    CHECK(draughts_set_piece(&state, 39, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK);
-    CHECK(draughts_set_piece(&state, 44, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
-    CHECK(draughts_set_piece(&state, 45, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 37, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 42, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 43, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
     move = make_move(path, 3, captures, 2);
 
     CHECK(draughts_apply_move(&state, &move) == DRAUGHTS_OK);
-    CHECK(piece_at(&state, 50, DRAUGHTS_EMPTY));
-    CHECK(piece_at(&state, 41, DRAUGHTS_BLACK_MAN));
+    CHECK(piece_at(&state, 48, DRAUGHTS_EMPTY));
+    CHECK(piece_at(&state, 39, DRAUGHTS_BLACK_MAN));
 }
 
 static void test_apply_rejects_invalid_moves_without_modifying_state(void)
@@ -739,6 +859,41 @@ static void test_apply_rejects_invalid_moves_without_modifying_state(void)
     CHECK(draughts_apply_move(&state, &move) == DRAUGHTS_ERR_INVALID_MOVE);
 }
 
+static void test_apply_rejects_structural_but_not_legal_moves(void)
+{
+    DraughtsState state;
+    DraughtsMove move;
+    const int wrong_direction_path[] = { 16, 11 };
+    const int mandatory_capture_quiet_path[] = { 24, 29 };
+    const int short_capture_path[] = { 22, 33 };
+    const int short_capture[] = { 28 };
+
+    CHECK(draughts_init(&state) == DRAUGHTS_OK);
+    move = make_move(wrong_direction_path, 2, NULL, 0);
+    CHECK(draughts_apply_move(&state, &move) == DRAUGHTS_ERR_INVALID_MOVE);
+    CHECK(piece_at(&state, 16, DRAUGHTS_BLACK_MAN));
+
+    CHECK(draughts_clear(&state) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 21, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 24, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 27, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    move = make_move(mandatory_capture_quiet_path, 2, NULL, 0);
+    CHECK(draughts_apply_move(&state, &move) == DRAUGHTS_ERR_INVALID_MOVE);
+    CHECK(piece_at(&state, 24, DRAUGHTS_BLACK_MAN));
+    CHECK(piece_at(&state, 29, DRAUGHTS_EMPTY));
+
+    CHECK(draughts_clear(&state) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 22, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 27, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 37, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    CHECK(draughts_set_piece(&state, 28, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK);
+    move = make_move(short_capture_path, 2, short_capture, 1);
+    CHECK(draughts_apply_move(&state, &move) == DRAUGHTS_ERR_INVALID_MOVE);
+    CHECK(piece_at(&state, 22, DRAUGHTS_BLACK_MAN));
+    CHECK(piece_at(&state, 28, DRAUGHTS_WHITE_MAN));
+    CHECK(piece_at(&state, 33, DRAUGHTS_EMPTY));
+}
+
 static void test_apply_rejects_invalid_move_shape_and_nulls(void)
 {
     DraughtsState state;
@@ -771,6 +926,7 @@ int main(void)
     test_king_quiet_moves_stop_at_any_piece();
     test_king_single_capture_has_all_landing_squares();
     test_king_multi_capture_keeps_longest_routes();
+    test_king_captured_piece_barrier_blocks_deeper_target();
     test_king_capture_blockers();
     test_king_and_man_captures_use_same_max_rule();
     test_king_capture_buffer_too_small_reports_total_landings();
@@ -785,13 +941,17 @@ int main(void)
     test_capture_blocked_by_own_piece_or_nonempty_landing();
     test_captured_piece_remains_barrier_during_multi_jump();
     test_capture_buffer_too_small_reports_total_best_moves();
+    test_is_legal_move_accepts_generated_and_rejects_nonlegal();
+    test_is_legal_move_rejects_shorter_capture_route();
     test_apply_quiet_move_switches_side();
     test_apply_single_capture_removes_piece();
     test_apply_multi_capture_removes_all_pieces();
     test_apply_king_capture_removes_piece_and_keeps_king();
+    test_apply_king_capture_can_return_to_origin();
     test_apply_promotes_black_and_white_men_on_final_square();
     test_apply_does_not_promote_when_jump_only_passes_back_rank();
     test_apply_rejects_invalid_moves_without_modifying_state();
+    test_apply_rejects_structural_but_not_legal_moves();
     test_apply_rejects_invalid_move_shape_and_nulls();
 
     if (failures != 0) {

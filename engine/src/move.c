@@ -1,5 +1,7 @@
 #include "draughts.h"
 
+#define DRAUGHTS_LEGAL_MOVE_BUFFER 512
+
 static int is_current_side_man(DraughtsPiece piece, DraughtsSide side)
 {
     return (side == DRAUGHTS_BLACK && piece == DRAUGHTS_BLACK_MAN)
@@ -174,6 +176,68 @@ static int is_valid_square_id(int square)
     return square >= 1 && square <= DRAUGHTS_SQUARE_COUNT;
 }
 
+static int is_move_shape_safe(const DraughtsMove *move)
+{
+    int i;
+
+    if (move == NULL) {
+        return 0;
+    }
+    if (move->path_len < 2 || move->path_len > DRAUGHTS_MAX_MOVE_PATH) {
+        return 0;
+    }
+    if (move->capture_count > DRAUGHTS_MAX_MOVE_CAPTURES) {
+        return 0;
+    }
+    if (move->capture_count == 0 && move->path_len != 2) {
+        return 0;
+    }
+    if (move->capture_count > 0 && move->capture_count != move->path_len - 1) {
+        return 0;
+    }
+
+    for (i = 0; i < move->path_len; ++i) {
+        if (!is_valid_square_id(move->path[i])) {
+            return 0;
+        }
+    }
+    for (i = 0; i < move->capture_count; ++i) {
+        int j;
+
+        if (!is_valid_square_id(move->captures[i])) {
+            return 0;
+        }
+        for (j = i + 1; j < move->capture_count; ++j) {
+            if (move->captures[i] == move->captures[j]) {
+                return 0;
+            }
+        }
+    }
+
+    return 1;
+}
+
+static int moves_equal(const DraughtsMove *left, const DraughtsMove *right)
+{
+    int i;
+
+    if (left->path_len != right->path_len || left->capture_count != right->capture_count) {
+        return 0;
+    }
+    for (i = 0; i < left->path_len; ++i) {
+        if (left->path[i] != right->path[i]) {
+            return 0;
+        }
+    }
+    for (i = 0; i < left->capture_count; ++i) {
+        if (left->captures[i] != right->captures[i]) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 static DraughtsPiece promote_if_needed(DraughtsPiece piece, int final_square)
 {
     int row;
@@ -208,16 +272,18 @@ static int validate_apply_move(
     if (state == NULL || move == NULL || side == NULL || moving_piece == NULL) {
         return DRAUGHTS_ERR_NULL;
     }
-    if (move->path_len < 2 || move->path_len > DRAUGHTS_MAX_MOVE_PATH) {
-        return DRAUGHTS_ERR_INVALID_MOVE;
-    }
-    if (move->capture_count > DRAUGHTS_MAX_MOVE_CAPTURES) {
-        return DRAUGHTS_ERR_INVALID_MOVE;
-    }
-    if (move->capture_count == 0 && move->path_len != 2) {
-        return DRAUGHTS_ERR_INVALID_MOVE;
-    }
-    if (move->capture_count > 0 && move->capture_count != move->path_len - 1) {
+    if (!is_move_shape_safe(move)) {
+        for (i = 0; i < move->path_len && i < DRAUGHTS_MAX_MOVE_PATH; ++i) {
+            if (!is_valid_square_id(move->path[i])) {
+                return DRAUGHTS_ERR_INVALID_SQUARE;
+            }
+        }
+        for (i = 0; i < move->capture_count && i < DRAUGHTS_MAX_MOVE_CAPTURES; ++i) {
+            if (!is_valid_square_id(move->captures[i])) {
+                return DRAUGHTS_ERR_INVALID_SQUARE;
+            }
+        }
+
         return DRAUGHTS_ERR_INVALID_MOVE;
     }
 
@@ -246,7 +312,7 @@ static int validate_apply_move(
     start = move->path[0];
     final = move->path[move->path_len - 1];
 
-    if (start == final) {
+    if (start == final && move->capture_count == 0) {
         return DRAUGHTS_ERR_INVALID_MOVE;
     }
     if (draughts_get_piece(state, start, &start_piece) != DRAUGHTS_OK) {
@@ -258,7 +324,7 @@ static int validate_apply_move(
     if (draughts_get_piece(state, final, &final_piece) != DRAUGHTS_OK) {
         return DRAUGHTS_ERR_INVALID_SQUARE;
     }
-    if (final_piece != DRAUGHTS_EMPTY) {
+    if (final != start && final_piece != DRAUGHTS_EMPTY) {
         return DRAUGHTS_ERR_INVALID_MOVE;
     }
 
@@ -618,18 +684,66 @@ int draughts_generate_legal_moves(
     return DRAUGHTS_OK;
 }
 
+int draughts_is_legal_move(
+    const DraughtsState *state,
+    const DraughtsMove *move,
+    int *is_legal
+)
+{
+    DraughtsMove legal_moves[DRAUGHTS_LEGAL_MOVE_BUFFER];
+    int move_count = 0;
+    int i;
+    int result;
+
+    if (state == NULL || move == NULL || is_legal == NULL) {
+        return DRAUGHTS_ERR_NULL;
+    }
+
+    *is_legal = 0;
+    if (!is_move_shape_safe(move)) {
+        return DRAUGHTS_OK;
+    }
+
+    result = draughts_generate_legal_moves(
+        state,
+        legal_moves,
+        DRAUGHTS_LEGAL_MOVE_BUFFER,
+        &move_count
+    );
+    if (result != DRAUGHTS_OK) {
+        return result;
+    }
+
+    for (i = 0; i < move_count; ++i) {
+        if (moves_equal(move, &legal_moves[i])) {
+            *is_legal = 1;
+            break;
+        }
+    }
+
+    return DRAUGHTS_OK;
+}
+
 int draughts_apply_move(DraughtsState *state, const DraughtsMove *move)
 {
     DraughtsSide side;
     DraughtsPiece moving_piece;
     DraughtsPiece final_piece;
     int final_square;
+    int is_legal = 0;
     int i;
     int result;
 
     result = validate_apply_move(state, move, &side, &moving_piece);
     if (result != DRAUGHTS_OK) {
         return result;
+    }
+    result = draughts_is_legal_move(state, move, &is_legal);
+    if (result != DRAUGHTS_OK) {
+        return result;
+    }
+    if (!is_legal) {
+        return DRAUGHTS_ERR_INVALID_MOVE;
     }
 
     final_square = move->path[move->path_len - 1];
