@@ -9,6 +9,7 @@ from dataset import (
     iter_jsonl_samples,
     resolve_jsonl_files,
 )
+from move_encoding import MOVE_FEATURE_DIM
 from selfplay import generate_dataset
 
 
@@ -34,6 +35,9 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(len(item["action_mask"]), 512)
         self.assertIn(item["value_target"], {-1, 0, 1})
         self.assertIsInstance(item["policy_target"], int)
+        self.assertGreater(len(item["move_features"]), 0)
+        self.assertEqual(len(item["move_features"][0]), MOVE_FEATURE_DIM)
+        self.assertIsInstance(item["policy_target_index"], int)
         self.assertIn("game_id", item["metadata"])
 
     def test_resolve_directory_and_iter_samples(self):
@@ -62,6 +66,8 @@ class DatasetTests(unittest.TestCase):
                 "observation": [[[0]]],
                 "action_mask": [1, 0],
                 "policy_target": 0,
+                "move_features": [[0.1] * MOVE_FEATURE_DIM],
+                "policy_target_index": 0,
                 "value_target": 1,
                 "metadata": {"ply": 0},
             },
@@ -69,6 +75,8 @@ class DatasetTests(unittest.TestCase):
                 "observation": [[[1]]],
                 "action_mask": [0, 1],
                 "policy_target": 1,
+                "move_features": [[0.2] * MOVE_FEATURE_DIM, [0.3] * MOVE_FEATURE_DIM],
+                "policy_target_index": 1,
                 "value_target": -1,
                 "metadata": {"ply": 1},
             },
@@ -78,6 +86,10 @@ class DatasetTests(unittest.TestCase):
         batches = list(batched(items, 1))
 
         self.assertEqual(batch["policy_target"], [0, 1])
+        self.assertEqual(len(batch["move_features"]), 2)
+        self.assertEqual(len(batch["move_features"][0]), 2)
+        self.assertEqual(batch["move_mask"], [[1, 0], [1, 1]])
+        self.assertEqual(batch["policy_target_index"], [0, 1])
         self.assertEqual(batch["value_target"], [1, -1])
         self.assertEqual(len(batches), 2)
 

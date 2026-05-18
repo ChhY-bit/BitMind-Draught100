@@ -34,8 +34,10 @@ BitMind-Draught100
 |   +-- selfplay.py                   JSONL 对局数据生成
 |   +-- inspect_dataset.py            JSONL 数据检查
 |   +-- dataset.py                    JSONL 数据读取与 batch 组装
-|   +-- config/*.yaml                 agent 参数配置
-|   +-- test_*.py                     trainer 测试
+|   +-- move_encoding.py              候选动作向量编码
+|   +-- model.py                      候选动作打分 policy/value 网络
+|   +-- config/*.yaml                 agent 与模型参数配置
+|   +-- tests/test_*.py               trainer 测试
 |
 +-- data/                            本地生成的数据集，不进入版本控制
 |
@@ -97,14 +99,18 @@ trainer/selfplay.py
         v
 data/*.jsonl
         |
-        +-------------------------+
-        |                         |
-        v                         v
-trainer/inspect_dataset.py trainer/dataset.py
-检查数据质量               读取样本并组装 batch
+        +-------------------------+-------------------------+
+        |                         |                         |
+        v                         v                         v
+trainer/inspect_dataset.py trainer/dataset.py       trainer/move_encoding.py
+检查数据质量               读取样本并组装 batch     编码候选动作
                                   |
                                   v
-                         后续 PyTorch 训练代码
+                         trainer/model.py
+                         候选动作打分网络
+                                  |
+                                  v
+                         后续监督学习训练代码
 ```
 
 ## 当前训练样本格式
@@ -125,7 +131,7 @@ sample
 +-- value_target             当前行棋方视角的胜负标签
 ```
 
-当前 `action_id` 是“当前局面合法动作列表编号”，不是全局固定动作空间。后续如果要训练更通用的策略网络，需要继续设计固定动作空间或动作候选打分模型。
+当前神经网络路线采用候选动作打分模型：`move_encoding.py` 将每个候选动作编码成固定长度向量，网络对当前局面的每个合法动作分别打分。
 
 ## 常用命令入口
 

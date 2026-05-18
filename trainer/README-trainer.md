@@ -12,15 +12,22 @@ trainer/
   selfplay.py
   inspect_dataset.py
   dataset.py
+  move_encoding.py
+  model.py
   config/material.yaml
   config/alphabeta.yaml
-  test_env.py
-  test_agents.py
-  test_arena.py
-  test_selfplay.py
-  test_inspect_dataset.py
-  test_dataset.py
+  config/model.yaml
+  tests/
+    test_env.py
+    test_agents.py
+    test_arena.py
+    test_selfplay.py
+    test_inspect_dataset.py
+    test_move_encoding.py
+    test_dataset.py
+    test_model.py
   README-trainer.md
+  README-network.md
 ```
 
 - `env.py`：标准化训练环境 `StandardDraughtsEnv`。
@@ -29,10 +36,14 @@ trainer/
 - `selfplay.py`：对局数据生成器，保存 JSONL 训练样本。
 - `inspect_dataset.py`：JSONL 数据检查器。
 - `dataset.py`：JSONL 数据读取器与 batch 组装工具。
+- `move_encoding.py`：候选动作向量编码器。
+- `model.py`：候选动作打分 policy/value 神经网络。
 - `config/material.yaml`：`MaterialAgent` 的材料评估参数。
 - `config/alphabeta.yaml`：`AlphaBetaAgent` 的搜索深度和增强评估参数。
-- `test_*.py`：训练环境、agent、arena、selfplay、数据检查器、数据读取器测试。
+- `config/model.yaml`：`CandidateMoveNet` 的网络结构参数。
+- `tests/`：训练环境、agent、arena、selfplay、数据检查器、动作编码器、数据读取器、模型测试。
 - `README-trainer.md`：本文档。
+- `README-network.md`：神经网络组件与动作编码设计记录。
 
 ## 运行测试
 
@@ -40,7 +51,7 @@ trainer/
 
 ```bash
 make interface
-PYTHONPATH=interface:trainer python3 -m unittest trainer/test_env.py trainer/test_agents.py trainer/test_arena.py trainer/test_selfplay.py trainer/test_inspect_dataset.py trainer/test_dataset.py
+PYTHONPATH=interface:trainer python3 -m unittest discover -s trainer/tests -p 'test_*.py'
 ```
 
 如果 Makefile 已包含 `trainer-test` 目标，也可以执行：
@@ -518,6 +529,8 @@ batch = collate_batch([dataset[0], dataset[1]])
 | `observation` | `6x10x10` 嵌套列表。 |
 | `action_mask` | 长度 512 的合法动作掩码。 |
 | `policy_target` | 要模仿的动作编号，即 `selected_action_id`。 |
+| `move_features` | 当前所有合法动作的候选动作编码，形状为 `N x 45`。 |
+| `policy_target_index` | 老师选择的动作在 `legal_moves` / `move_features` 中的位置。 |
 | `value_target` | 当前行棋方视角的胜负标签。 |
 | `metadata` | `game_id`、`ply`、`side_to_move`、`agent`、`final_result` 等调试信息。 |
 
@@ -544,12 +557,57 @@ torch_batch = to_torch_batch(batch)
 
 当前 `DraughtsJsonlDataset` 是内存数据集，会把样本读入列表，适合当前几万到几十万样本的阶段。后续数据量变大后，可以继续实现真正的懒加载或分片读取。
 
+动作编码和模型结构技术细节见：
+
+```text
+trainer/README-network.md
+```
+
+## 神经网络模型
+
+`model.py` 当前实现了第一版 `CandidateMoveNet`，用于候选动作打分。
+
+输入：
+
+```text
+observation:   [B, 6, 10, 10]
+move_features: [B, M, 45]
+move_mask:     [B, M]
+```
+
+输出：
+
+```text
+policy_logits: [B, M]
+value:         [B]
+```
+
+其中 `M` 是当前 batch 中 padding 后的最大候选动作数。`move_mask=0` 的 padding 动作会被设置为极小 logit，不参与实际选择。
+
+最小用法：
+
+```python
+from dataset import DraughtsJsonlDataset, collate_batch, to_torch_batch
+from model import CandidateMoveNet
+
+dataset = DraughtsJsonlDataset(["data/selfplay.jsonl"])
+batch = collate_batch([dataset[0], dataset[1]])
+torch_batch = to_torch_batch(batch)
+
+model = CandidateMoveNet()
+output = model(
+    torch_batch["observation"],
+    torch_batch["move_features"],
+    torch_batch["move_mask"],
+)
+```
+
 ## 后续方向
 
 建议后续依次实现：
 
-1. 一个最小 policy/value 网络。
-2. 监督学习模仿 AlphaBeta。
-3. 训练日志、模型保存与评测流程。
-4. 更合理的固定动作空间或候选动作打分模型。
+1. 监督学习脚本，使用 selfplay 数据模仿 AlphaBeta。
+2. 训练日志、模型保存与评测流程。
+3. 将神经网络接入 agent 或搜索评测流程。
+4. 更大规模数据生成与训练。
 5. 搜索与强化学习流程。

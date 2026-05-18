@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Sequence
 
+from move_encoding import MOVE_FEATURE_DIM, encode_legal_moves, selected_move_index
+
 
 OBSERVATION_SHAPE = (6, 10, 10)
 ACTION_MASK_LENGTH = 512
@@ -54,10 +56,14 @@ class DraughtsJsonlDataset:
 
 
 def training_item_from_sample(sample: Dict[str, object]) -> Dict[str, object]:
+    legal_moves = sample["legal_moves"]
+    selected_move = sample["selected_move"]
     return {
         "observation": sample["observation"],
         "action_mask": sample["action_mask"],
         "policy_target": int(sample["selected_action_id"]),
+        "move_features": encode_legal_moves(legal_moves),
+        "policy_target_index": selected_move_index(legal_moves, selected_move),
         "value_target": int(sample["value_target"]),
         "metadata": {
             "game_id": int(sample["game_id"]),
@@ -76,6 +82,8 @@ def validate_training_sample(sample: Dict[str, object], index: int = -1) -> None
     action_mask = sample.get("action_mask")
     selected_action_id = sample.get("selected_action_id")
     value_target = sample.get("value_target")
+    legal_moves = sample.get("legal_moves")
+    selected_move = sample.get("selected_move")
 
     if not has_observation_shape(observation, OBSERVATION_SHAPE):
         raise ValueError(f"{prefix}observation must be 6x10x10")
@@ -89,6 +97,11 @@ def validate_training_sample(sample: Dict[str, object], index: int = -1) -> None
         raise ValueError(f"{prefix}selected action must be enabled in action_mask")
     if int(value_target) not in {-1, 0, 1}:
         raise ValueError(f"{prefix}value_target must be -1, 0, or 1")
+    if not isinstance(legal_moves, list) or not legal_moves:
+        raise ValueError(f"{prefix}legal_moves must be a non-empty list")
+    if not isinstance(selected_move, dict):
+        raise ValueError(f"{prefix}selected_move must be an object")
+    selected_move_index(legal_moves, selected_move)
 
 
 def has_observation_shape(value: object, shape: tuple[int, int, int]) -> bool:
@@ -105,13 +118,26 @@ def has_observation_shape(value: object, shape: tuple[int, int, int]) -> bool:
 
 
 def collate_batch(items: Sequence[Dict[str, object]]) -> Dict[str, object]:
+    max_moves = max((len(item["move_features"]) for item in items), default=0)
     return {
         "observation": [item["observation"] for item in items],
         "action_mask": [item["action_mask"] for item in items],
         "policy_target": [item["policy_target"] for item in items],
+        "move_features": [pad_move_features(item["move_features"], max_moves) for item in items],
+        "move_mask": [
+            [1] * len(item["move_features"]) + [0] * (max_moves - len(item["move_features"]))
+            for item in items
+        ],
+        "policy_target_index": [item["policy_target_index"] for item in items],
         "value_target": [item["value_target"] for item in items],
         "metadata": [item["metadata"] for item in items],
     }
+
+
+def pad_move_features(move_features: Sequence[Sequence[float]], max_moves: int) -> List[List[float]]:
+    padded = [list(features) for features in move_features]
+    padded.extend([[0.0] * MOVE_FEATURE_DIM for _index in range(max_moves - len(padded))])
+    return padded
 
 
 def to_torch_batch(batch: Dict[str, object]) -> Dict[str, object]:
@@ -124,6 +150,9 @@ def to_torch_batch(batch: Dict[str, object]) -> Dict[str, object]:
         "observation": torch.tensor(batch["observation"], dtype=torch.float32),
         "action_mask": torch.tensor(batch["action_mask"], dtype=torch.float32),
         "policy_target": torch.tensor(batch["policy_target"], dtype=torch.long),
+        "move_features": torch.tensor(batch["move_features"], dtype=torch.float32),
+        "move_mask": torch.tensor(batch["move_mask"], dtype=torch.float32),
+        "policy_target_index": torch.tensor(batch["policy_target_index"], dtype=torch.long),
         "value_target": torch.tensor(batch["value_target"], dtype=torch.float32),
         "metadata": batch["metadata"],
     }

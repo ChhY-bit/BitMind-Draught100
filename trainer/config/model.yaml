@@ -1,0 +1,33 @@
+# CandidateMoveNet 神经网络结构参数。
+
+# 棋盘输入通道数；当前 observation 固定为 6 个通道。
+board_channels: 6
+
+# 棋盘宽高；国际跳棋棋盘为 10x10。
+board_size: 10
+
+# 卷积层输出通道数，也可以理解为每个棋盘位置提取多少种局部特征。
+conv_channels: 64
+
+# 卷积层数量；当前使用 3 层 3x3 卷积。
+conv_layers: 3
+
+# 卷积核大小；3 表示每次观察 3x3 的局部区域。
+# 当前代码要求使用奇数卷积核，便于配合 padding 保持棋盘宽高不变。
+conv_kernel_size: 3
+
+# 卷积 padding；1 可以让 3x3 卷积后棋盘仍保持 10x10 大小。
+# 当前代码要求 padding = conv_kernel_size // 2。
+conv_padding: 1
+
+# CNN 展平后压缩成的棋盘特征维度。
+board_feature_dim: 256
+
+# 单个候选动作的输入特征维度；由 move_encoding.py 当前设计决定。
+move_feature_dim: 45
+
+# 动作编码器 MLP 输出的动作嵌入维度。
+move_embedding_dim: 128
+
+# score head 和 value head 中间隐藏层维度。
+hidden_dim: 128
