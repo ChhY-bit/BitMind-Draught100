@@ -1,10 +1,28 @@
-# AlphaBetaAgent search and evaluation parameters.
+# AlphaBetaAgent 搜索与增强评估参数。
+
+# 搜索深度，单位是半回合；数值越大越强但越慢。
 search_depth: 2
+
+# 普通子的基础价值。
 man_value: 100
+
+# 王的基础价值。
 king_value: 250
+
+# 搜索到己方胜局时使用的极大分值。
 win_value: 1000000
+
+# 搜索到和棋时使用的分值；当前和棋规则暂未实际启用。
 draw_value: 0
+
+# 普通子每向升王方向推进一行获得的奖励。
 advancement_value: 4
+
+# 棋子位于中心区域时获得的奖励。
 center_value: 3
+
+# 棋子位于最左或最右边线时受到的惩罚。
 edge_penalty: 2
+
+# 普通子停留在己方底线时获得的守卫奖励。
 back_row_guard_value: 5

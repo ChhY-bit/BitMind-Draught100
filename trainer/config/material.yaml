@@ -1,5 +1,13 @@
-# MaterialAgent evaluation parameters.
+# MaterialAgent 一步材料评估参数。
+
+# 普通子的基础价值。
 man_value: 100
+
+# 王的基础价值。
 king_value: 250
+
+# 走后直接获胜时使用的极大分值。
 win_value: 1000000
+
+# 走后和棋时使用的分值；当前和棋规则暂未实际启用。
 draw_value: 0

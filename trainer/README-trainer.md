@@ -9,20 +9,29 @@ trainer/
   env.py
   agents.py
   arena.py
+  selfplay.py
+  inspect_dataset.py
+  dataset.py
   config/material.yaml
   config/alphabeta.yaml
   test_env.py
   test_agents.py
   test_arena.py
+  test_selfplay.py
+  test_inspect_dataset.py
+  test_dataset.py
   README-trainer.md
 ```
 
 - `env.py`：标准化训练环境 `StandardDraughtsEnv`。
 - `agents.py`：基础 agent。
 - `arena.py`：批量对战评测器。
+- `selfplay.py`：对局数据生成器，保存 JSONL 训练样本。
+- `inspect_dataset.py`：JSONL 数据检查器。
+- `dataset.py`：JSONL 数据读取器与 batch 组装工具。
 - `config/material.yaml`：`MaterialAgent` 的材料评估参数。
 - `config/alphabeta.yaml`：`AlphaBetaAgent` 的搜索深度和增强评估参数。
-- `test_*.py`：训练环境、agent、arena 测试。
+- `test_*.py`：训练环境、agent、arena、selfplay、数据检查器、数据读取器测试。
 - `README-trainer.md`：本文档。
 
 ## 运行测试
@@ -31,7 +40,7 @@ trainer/
 
 ```bash
 make interface
-PYTHONPATH=interface:trainer python3 -m unittest trainer/test_env.py trainer/test_agents.py trainer/test_arena.py
+PYTHONPATH=interface:trainer python3 -m unittest trainer/test_env.py trainer/test_agents.py trainer/test_arena.py trainer/test_selfplay.py trainer/test_inspect_dataset.py trainer/test_dataset.py
 ```
 
 如果 Makefile 已包含 `trainer-test` 目标，也可以执行：
@@ -163,10 +172,10 @@ mask[9..511] = 0
 
 ## 当前限制
 
-- 还没有 PyTorch 张量输出；后续可以把嵌套列表转换为 tensor。
+- `dataset.py` 已提供可选 PyTorch batch 转换；当前项目仍不强制依赖 PyTorch。
 - 当前 action id 是“当前局面合法动作列表编号”，不是全局固定动作空间。
 - 还没有批量环境。
-- 还没有自博弈采样器。
+- 已有 JSONL 对局数据生成器、检查器和读取器，但还没有模型训练代码。
 - reward 仍是最简单的终局奖励。
 
 ## 基础 Agent
@@ -363,12 +372,184 @@ PYTHONPATH=interface:trainer python3 trainer/arena.py --black material --white r
 PYTHONPATH=interface:trainer python3 trainer/arena.py --black alphabeta --white material --games 20
 ```
 
+## 对局数据生成 Selfplay
+
+`selfplay.py` 用已有 agent 自动下棋，并把每一步保存成 JSONL 数据集。它的目标不是只保存人类可读棋谱，而是保存后续监督学习、价值学习和强化学习都能复用的结构化样本。
+
+基本命令：
+
+```bash
+make interface
+PYTHONPATH=interface:trainer python3 trainer/selfplay.py --black alphabeta --white alphabeta --games 10 --max-plies 300 --output data/selfplay.jsonl
+```
+
+参数说明：
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--black` | `alphabeta` | 黑方 agent，可选 `random`、`greedy`、`material`、`alphabeta`。 |
+| `--white` | `alphabeta` | 白方 agent，可选 `random`、`greedy`、`material`、`alphabeta`。 |
+| `--games` | `10` | 生成多少局。 |
+| `--max-plies` | `300` | 每局最大半回合数。达到上限仍未结束时，该局样本的 `value_target` 记为 `0`。 |
+| `--output` | 必填 | 输出 JSONL 文件路径。父目录不存在时会自动创建。 |
+| `--log-interval` | `1` | 每隔多少局打印一次进度。 |
+| `--seed` | `1` | 随机种子。 |
+| `--material-config` | 默认配置 | 指定 `MaterialAgent` 的 YAML 参数文件。 |
+| `--alphabeta-config` | 默认配置 | 指定 `AlphaBetaAgent` 的 YAML 参数文件。 |
+
+JSONL 表示“一行一个 JSON 对象”。每一行是一手棋之前的训练样本，常用字段包括：
+
+| 字段 | 含义 |
+| --- | --- |
+| `schema_version` | 数据格式版本，当前为 `1`。 |
+| `game_id` | 第几局，从 `0` 开始。 |
+| `ply` | 当前局内第几个半回合，从 `0` 开始。 |
+| `side_to_move` | 当前行棋方，黑方 `0`，白方 `1`。 |
+| `agent` | 这一手由哪个 agent 选择。 |
+| `raw_squares` | 长度 50 的原始棋盘数组，便于调试和复盘。 |
+| `observation` | `6x10x10` 训练编码。 |
+| `legal_action_ids` | 当前合法动作编号列表。 |
+| `legal_moves` | 当前所有合法动作的路径、吃子列表和动作编号。 |
+| `action_mask` | 长度 512 的合法动作掩码。 |
+| `selected_action_id` | agent 实际选择的动作编号。 |
+| `selected_move` | agent 实际选择动作的路径和吃子列表。 |
+| `final_result` | 该局最终结果。黑胜 `1`，白胜 `2`，和棋 `3`，达到最大步数仍未结束通常为 `0`。 |
+| `max_plies_reached` | 是否因达到最大半回合数而停止。 |
+| `value_target` | 从该样本当前行棋方视角看最终结果：胜 `1`，负 `-1`，和棋或最大步数未结束 `0`。 |
+
+查看前几条样本：
+
+```bash
+head -n 3 data/selfplay.jsonl
+```
+
+这种格式后续可以直接用于：
+
+- 监督学习：用 `selected_action_id` 模仿 AlphaBeta 或其他老师。
+- 价值学习：用 `value_target` 学习局面胜负倾向。
+- 数据审计：用 `raw_squares`、`legal_moves` 和 `selected_move` 检查 agent 决策。
+
+## 数据检查 Inspect Dataset
+
+生成数据后，建议先用 `inspect_dataset.py` 检查数据是否干净、分布是否合理，再进入训练。
+
+检查单个文件：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/inspect_dataset.py data/selfplay.jsonl
+```
+
+检查多个文件：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/inspect_dataset.py data/ab_selfplay_001.jsonl data/ab_vs_material_001.jsonl
+```
+
+检查整个目录，工具会递归读取其中所有 `*.jsonl` 文件：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/inspect_dataset.py data/
+```
+
+输出字段示例：
+
+```text
+dataset inspection
+files: 4
+samples: 120000
+valid_samples: 120000
+invalid_json_lines: 0
+invalid_samples: 0
+games: 400
+black_wins: 170
+white_wins: 150
+draws: 0
+max_plies_reached: 80
+avg_plies: 300.00
+value_target: -1=42000 0=24000 1=54000
+status: ok
+```
+
+重点看这些项目：
+
+| 字段 | 含义 |
+| --- | --- |
+| `valid_samples` | 结构合法的样本数。 |
+| `invalid_json_lines` | 无法解析为 JSON 的行数，正常应为 `0`。 |
+| `invalid_samples` | 字段或结构不合法的样本数，正常应为 `0`。 |
+| `games` | 数据集中局数；多个文件中相同 `game_id` 会按不同文件分别计数。 |
+| `max_plies_reached` | 达到最大半回合数后截断的局数。比例太高时，`value_target=0` 会增多。 |
+| `value_target` | 从当前行棋方视角的胜负标签分布。 |
+| `validation_errors` | 具体结构错误统计；正常应为 `none`。 |
+| `status` | `ok` 表示没有 JSON 或样本结构错误。 |
+
+检查器当前会验证：
+
+- 必需字段是否存在。
+- `observation` 是否为 `6x10x10`。
+- `raw_squares` 是否长度为 `50`。
+- `action_mask` 是否长度为 `512`。
+- `selected_action_id` 是否在 `legal_action_ids` 中。
+- 合法动作编号在 `action_mask` 中是否为 `1`。
+- `value_target` 是否只包含 `-1/0/1`。
+
+## 数据读取 Dataset
+
+`dataset.py` 负责读取 `selfplay.py` 生成的 JSONL，并转换成训练前更直接可用的样本结构。
+
+基本用法：
+
+```python
+from dataset import DraughtsJsonlDataset, collate_batch, to_torch_batch
+
+dataset = DraughtsJsonlDataset(["data/selfplay.jsonl"])
+item = dataset[0]
+
+print(item["policy_target"])
+print(item["value_target"])
+
+batch = collate_batch([dataset[0], dataset[1]])
+```
+
+`item` 的字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `observation` | `6x10x10` 嵌套列表。 |
+| `action_mask` | 长度 512 的合法动作掩码。 |
+| `policy_target` | 要模仿的动作编号，即 `selected_action_id`。 |
+| `value_target` | 当前行棋方视角的胜负标签。 |
+| `metadata` | `game_id`、`ply`、`side_to_move`、`agent`、`final_result` 等调试信息。 |
+
+读取整个目录：
+
+```python
+dataset = DraughtsJsonlDataset(["data/"])
+```
+
+流式读取大文件：
+
+```python
+from dataset import iter_jsonl_samples
+
+for sample in iter_jsonl_samples(["data/"]):
+    ...
+```
+
+如果环境安装了 PyTorch，可以把 batch 转成 tensor：
+
+```python
+torch_batch = to_torch_batch(batch)
+```
+
+当前 `DraughtsJsonlDataset` 是内存数据集，会把样本读入列表，适合当前几万到几十万样本的阶段。后续数据量变大后，可以继续实现真正的懒加载或分片读取。
+
 ## 后续方向
 
 建议后续依次实现：
 
-1. AlphaBeta 的走法排序、缓存和限时搜索。
-2. 更昂贵但更强的评估特征：机动性、被威胁棋子、安全性。
-3. observation 到 PyTorch tensor 的转换。
-4. 候选动作打分模型或固定动作空间设计。
+1. 一个最小 policy/value 网络。
+2. 监督学习模仿 AlphaBeta。
+3. 训练日志、模型保存与评测流程。
+4. 更合理的固定动作空间或候选动作打分模型。
 5. 搜索与强化学习流程。
