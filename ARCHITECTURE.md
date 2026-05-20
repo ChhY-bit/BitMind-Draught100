@@ -29,14 +29,15 @@ BitMind-Draught100
 +-- trainer/                         训练、搜索、数据生成
 |   |
 |   +-- env.py                        标准化训练环境
-|   +-- agents.py                     random/greedy/material/alphabeta
+|   +-- agents.py                     random/greedy/material/alphabeta/supervised
 |   +-- arena.py                      批量 agent 对战评测
 |   +-- selfplay.py                   JSONL 对局数据生成
 |   +-- inspect_dataset.py            JSONL 数据检查
 |   +-- dataset.py                    JSONL 数据读取与 batch 组装
 |   +-- move_encoding.py              候选动作向量编码
 |   +-- model.py                      候选动作打分 policy/value 网络
-|   +-- config/*.yaml                 agent 与模型参数配置
+|   +-- train_supervised.py           监督学习训练入口
+|   +-- config/*.yaml                 agent、模型与训练参数配置
 |   +-- tests/test_*.py               trainer 测试
 |
 +-- data/                            本地生成的数据集，不进入版本控制
@@ -110,7 +111,11 @@ trainer/inspect_dataset.py trainer/dataset.py       trainer/move_encoding.py
                          候选动作打分网络
                                   |
                                   v
-                         后续监督学习训练代码
+                         trainer/train_supervised.py
+                         监督学习训练与 checkpoint 保存
+                                  |
+                                  v
+                         trainer/checkpoints/*.pt
 ```
 
 ## 当前训练样本格式
@@ -152,4 +157,13 @@ PYTHONPATH=interface:trainer python3 trainer/selfplay.py --black alphabeta --whi
 
 ```bash
 PYTHONPATH=interface:trainer python3 trainer/inspect_dataset.py data/
+```
+
+监督训练：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/train_supervised.py data \
+  --config trainer/config/supervised.yaml \
+  --model-config trainer/config/model.yaml \
+  --checkpoint-dir trainer/checkpoints
 ```

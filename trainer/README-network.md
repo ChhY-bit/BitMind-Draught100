@@ -322,4 +322,10 @@ policy loss: CrossEntropy(scores, policy_target_index)
 value loss:  MSE(value, value_target)
 ```
 
-当前模型只完成结构和前向计算，还没有训练脚本、模型保存或评测流程。
+当前监督训练脚本：
+
+```text
+trainer/train_supervised.py
+```
+
+训练脚本会保存 PyTorch checkpoint，并记录当前运行耗时和累计训练时间。模型评测与接入 GUI/agent 仍待后续实现。

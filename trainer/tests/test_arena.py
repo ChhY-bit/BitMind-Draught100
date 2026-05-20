@@ -1,7 +1,10 @@
 import unittest
+from tempfile import TemporaryDirectory
+from pathlib import Path
 
 from arena import ArenaStats, play_game, run_arena
 from agents import RandomAgent
+from test_agents import create_zero_supervised_checkpoint
 
 
 class ArenaTests(unittest.TestCase):
@@ -38,6 +41,23 @@ class ArenaTests(unittest.TestCase):
         )
 
         self.assertEqual(stats.games, 2)
+
+    def test_run_arena_with_supervised_checkpoint(self):
+        with TemporaryDirectory() as tmp_dir:
+            checkpoint = create_zero_supervised_checkpoint(Path(tmp_dir))
+            stats = run_arena(
+                black_name="supervised",
+                white_name="supervised",
+                games=1,
+                max_plies=4,
+                log_interval=1,
+                seed=1,
+                black_checkpoint_path=str(checkpoint),
+                white_checkpoint_path=str(checkpoint),
+                device="cpu",
+            )
+
+        self.assertEqual(stats.games, 1)
 
 
 if __name__ == "__main__":

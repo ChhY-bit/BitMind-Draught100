@@ -76,12 +76,17 @@ def run_arena(
     seed: Optional[int],
     material_config_path: Optional[str] = None,
     alphabeta_config_path: Optional[str] = None,
+    black_checkpoint_path: Optional[str] = None,
+    white_checkpoint_path: Optional[str] = None,
+    device: Optional[str] = None,
 ) -> ArenaStats:
     black_agent = make_agent(
         black_name,
         seed=seed,
         material_config_path=material_config_path,
         alphabeta_config_path=alphabeta_config_path,
+        supervised_checkpoint_path=black_checkpoint_path,
+        device=device,
     )
     white_seed = None if seed is None else seed + 1
     white_agent = make_agent(
@@ -89,6 +94,8 @@ def run_arena(
         seed=white_seed,
         material_config_path=material_config_path,
         alphabeta_config_path=alphabeta_config_path,
+        supervised_checkpoint_path=white_checkpoint_path,
+        device=device,
     )
     stats = ArenaStats()
     start = time.perf_counter()
@@ -97,7 +104,9 @@ def run_arena(
         f"arena: black={black_agent.name} white={white_agent.name} "
         f"games={games} max_plies={max_plies} seed={seed} "
         f"material_config={material_config_path or 'default'} "
-        f"alphabeta_config={alphabeta_config_path or 'default'}"
+        f"alphabeta_config={alphabeta_config_path or 'default'} "
+        f"black_checkpoint={black_checkpoint_path or 'none'} "
+        f"white_checkpoint={white_checkpoint_path or 'none'}"
     )
 
     for game_index in range(1, games + 1):
@@ -134,6 +143,21 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="YAML file for AlphaBetaAgent parameters.",
     )
+    parser.add_argument(
+        "--black-checkpoint",
+        default=None,
+        help="Checkpoint path for black SupervisedAgent.",
+    )
+    parser.add_argument(
+        "--white-checkpoint",
+        default=None,
+        help="Checkpoint path for white SupervisedAgent.",
+    )
+    parser.add_argument(
+        "--device",
+        default=None,
+        help="Device for SupervisedAgent: cpu, cuda, or cuda:0. Defaults to auto.",
+    )
     args = parser.parse_args()
 
     if args.games <= 0:
@@ -142,6 +166,10 @@ def parse_args() -> argparse.Namespace:
         parser.error("--max-plies must be positive")
     if args.log_interval <= 0:
         parser.error("--log-interval must be positive")
+    if args.black == "supervised" and not args.black_checkpoint:
+        parser.error("--black supervised requires --black-checkpoint")
+    if args.white == "supervised" and not args.white_checkpoint:
+        parser.error("--white supervised requires --white-checkpoint")
     return args
 
 
@@ -156,6 +184,9 @@ def main() -> None:
         seed=args.seed,
         material_config_path=args.material_config,
         alphabeta_config_path=args.alphabeta_config,
+        black_checkpoint_path=args.black_checkpoint,
+        white_checkpoint_path=args.white_checkpoint,
+        device=args.device,
     )
 
 

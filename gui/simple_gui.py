@@ -5,7 +5,7 @@ import sys
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import ttk
+from tkinter import filedialog, messagebox, ttk
 from typing import Dict, List, Optional, Sequence
 
 
@@ -13,8 +13,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INTERFACE_DIR = PROJECT_ROOT / "interface"
 if str(INTERFACE_DIR) not in sys.path:
     sys.path.insert(0, str(INTERFACE_DIR))
+TRAINER_DIR = PROJECT_ROOT / "trainer"
+if str(TRAINER_DIR) not in sys.path:
+    sys.path.insert(0, str(TRAINER_DIR))
 
 from draughts_env import DraughtsEnv, Move  # noqa: E402
+from agents import SupervisedAgent  # noqa: E402
+from env import encode_observation  # noqa: E402
 
 
 BOARD_SIZE = 10
@@ -46,12 +51,16 @@ RESULT_LABELS = {
 PLAYER_KIND_LABELS = {
     "human": "人类",
     "random": "随机AI",
+    "supervised": "监督模型AI",
 }
 
 PLAYER_LABEL_TO_KIND = {
     "人类": "human",
     "随机AI": "random",
+    "监督模型AI": "supervised",
 }
+
+PLAYER_KIND_OPTIONS = ("人类", "随机AI", "监督模型AI")
 
 
 @dataclass
@@ -72,10 +81,43 @@ class RandomAgent:
     def is_human(self) -> bool:
         return False
 
-    def choose_move(self, moves: Sequence[Move]) -> Optional[Move]:
+    def choose_move(self, moves: Sequence[Move], env: Optional[DraughtsEnv] = None) -> Optional[Move]:
         if not moves:
             return None
         return self.rng.choice(list(moves))
+
+
+@dataclass
+class SupervisedPlayer:
+    name: str
+    checkpoint_path: str
+    kind: str = "supervised"
+
+    def __post_init__(self) -> None:
+        self.agent = SupervisedAgent(self.checkpoint_path, device="cpu")
+
+    def is_human(self) -> bool:
+        return False
+
+    def choose_move(self, moves: Sequence[Move], env: Optional[DraughtsEnv] = None) -> Optional[Move]:
+        if not moves:
+            return None
+        if env is None:
+            raise ValueError("监督模型AI需要当前棋局环境")
+        action_id = self.agent.select_action(
+            env.observation(),
+            moves,
+            EncodedObservationAdapter(env),
+        )
+        return find_move_by_action_id(moves, action_id)
+
+
+class EncodedObservationAdapter:
+    def __init__(self, env: DraughtsEnv) -> None:
+        self.env = env
+
+    def observation(self):
+        return encode_observation(self.env.observation())
 
 
 class BoardView(tk.Canvas):
@@ -211,15 +253,22 @@ class GameController:
         self.ai_paused = False
         self.ai_job: Optional[str] = None
 
-    def start_new_game(self, black_kind: str, white_kind: str) -> None:
+    def start_new_game(
+        self,
+        black_kind: str,
+        white_kind: str,
+        checkpoint_paths: Optional[Dict[int, str]] = None,
+    ) -> None:
         self.cancel_ai_job()
+        checkpoint_paths = checkpoint_paths or {}
         self.players = {
-            BLACK_SIDE: self._make_player(BLACK_SIDE, black_kind),
-            WHITE_SIDE: self._make_player(WHITE_SIDE, white_kind),
+            BLACK_SIDE: self._make_player(BLACK_SIDE, black_kind, checkpoint_paths.get(BLACK_SIDE)),
+            WHITE_SIDE: self._make_player(WHITE_SIDE, white_kind, checkpoint_paths.get(WHITE_SIDE)),
         }
         self.ai_paused = False
         self.app.update_pause_button(self.ai_paused)
         self.reset_current_game(clear_log=True)
+        self.log_model_players()
 
     def reset_current_game(self, clear_log: bool = True) -> None:
         self.cancel_ai_job()
@@ -406,7 +455,7 @@ class GameController:
             return
 
         legal_moves = self.env.legal_moves()
-        move = player.choose_move(legal_moves)
+        move = player.choose_move(legal_moves, self.env)
         if move is None:
             self.app.log(f"{player.name} 没有可执行动作。", "warn")
             return
@@ -445,10 +494,23 @@ class GameController:
         if not self.ai_paused:
             self.perform_ai_move()
 
-    def _make_player(self, side: int, kind: str):
+    def log_model_players(self) -> None:
+        for side in (BLACK_SIDE, WHITE_SIDE):
+            player = self.players[side]
+            if getattr(player, "kind", None) == "supervised":
+                self.app.log(
+                    f"{player.name} 已加载模型：{Path(player.checkpoint_path).name}",
+                    "info",
+                )
+
+    def _make_player(self, side: int, kind: str, checkpoint_path: Optional[str] = None):
         side_label = "黑方" if side == BLACK_SIDE else "白方"
         if kind == "random":
             return RandomAgent(f"{side_label}随机AI", self.rng)
+        if kind == "supervised":
+            if not checkpoint_path:
+                raise ValueError(f"{side_label}监督模型AI需要选择 checkpoint 文件")
+            return SupervisedPlayer(f"{side_label}监督模型AI", checkpoint_path)
         return HumanPlayer(f"{side_label}玩家")
 
     def _select_start(
@@ -697,9 +759,9 @@ class DraughtsApp(tk.Tk):
         black_combo = ttk.Combobox(
             frame,
             textvariable=black_var,
-            values=("人类", "随机AI"),
+            values=PLAYER_KIND_OPTIONS,
             state="readonly",
-            width=12,
+            width=14,
         )
         black_combo.grid(row=1, column=1, sticky="ew", pady=4)
 
@@ -707,9 +769,9 @@ class DraughtsApp(tk.Tk):
         white_combo = ttk.Combobox(
             frame,
             textvariable=white_var,
-            values=("人类", "随机AI"),
+            values=PLAYER_KIND_OPTIONS,
             state="readonly",
-            width=12,
+            width=14,
         )
         white_combo.grid(row=2, column=1, sticky="ew", pady=4)
 
@@ -719,14 +781,46 @@ class DraughtsApp(tk.Tk):
         def start_game() -> None:
             black_selected = PLAYER_LABEL_TO_KIND[black_var.get()]
             white_selected = PLAYER_LABEL_TO_KIND[white_var.get()]
+            checkpoint_paths: Dict[int, str] = {}
+            if black_selected == "supervised":
+                path = self.ask_checkpoint_path("请选择黑方监督模型 checkpoint", dialog)
+                if path is None:
+                    return
+                checkpoint_paths[BLACK_SIDE] = path
+            if white_selected == "supervised":
+                path = self.ask_checkpoint_path("请选择白方监督模型 checkpoint", dialog)
+                if path is None:
+                    return
+                checkpoint_paths[WHITE_SIDE] = path
+            try:
+                self.controller.start_new_game(black_selected, white_selected, checkpoint_paths)
+            except Exception as exc:
+                messagebox.showerror("创建对局失败", str(exc), parent=dialog)
+                return
             dialog.destroy()
-            self.controller.start_new_game(black_selected, white_selected)
 
         ttk.Button(buttons, text="开始对局", command=start_game).pack(side="right")
         dialog.protocol("WM_DELETE_WINDOW", start_game)
         dialog.bind("<Return>", lambda _event: start_game())
         black_combo.focus_set()
         self.wait_window(dialog)
+
+    def ask_checkpoint_path(self, title: str, parent: tk.Toplevel) -> Optional[str]:
+        checkpoint_dir = PROJECT_ROOT / "trainer" / "checkpoints"
+        initial_dir = checkpoint_dir if checkpoint_dir.exists() else PROJECT_ROOT
+        path = filedialog.askopenfilename(
+            parent=parent,
+            title=title,
+            initialdir=str(initial_dir),
+            filetypes=(
+                ("PyTorch checkpoint", "*.pt *.pth"),
+                ("所有文件", "*"),
+            ),
+        )
+        if not path:
+            messagebox.showwarning("未选择模型", "请选择 checkpoint 文件后再开始对局。", parent=parent)
+            return None
+        return path
 
     def _on_square_click(self, square_id: int) -> None:
         self.controller.handle_square_click(square_id)

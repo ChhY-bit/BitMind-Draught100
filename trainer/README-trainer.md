@@ -1,6 +1,6 @@
 # 训练环境说明
 
-`trainer/` 目录当前只实现最基础的标准化环境，还没有开始神经网络训练。它的目标是把 `interface.DraughtsEnv` 包装成后续训练代码更容易使用的形式。
+`trainer/` 目录当前包含标准化环境、基础 agent、数据生成/读取、候选动作神经网络，以及第一版监督学习训练脚本。
 
 ## 当前文件
 
@@ -14,9 +14,12 @@ trainer/
   dataset.py
   move_encoding.py
   model.py
+  train_supervised.py
   config/material.yaml
   config/alphabeta.yaml
+  config/selfplay.yaml
   config/model.yaml
+  config/supervised.yaml
   tests/
     test_env.py
     test_agents.py
@@ -26,6 +29,7 @@ trainer/
     test_move_encoding.py
     test_dataset.py
     test_model.py
+    test_train_supervised.py
   README-trainer.md
   README-network.md
 ```
@@ -38,10 +42,13 @@ trainer/
 - `dataset.py`：JSONL 数据读取器与 batch 组装工具。
 - `move_encoding.py`：候选动作向量编码器。
 - `model.py`：候选动作打分 policy/value 神经网络。
+- `train_supervised.py`：监督学习训练脚本，读取 JSONL 数据训练 `CandidateMoveNet`。
 - `config/material.yaml`：`MaterialAgent` 的材料评估参数。
 - `config/alphabeta.yaml`：`AlphaBetaAgent` 的搜索深度和增强评估参数。
+- `config/selfplay.yaml`：selfplay 数据生成参数。
 - `config/model.yaml`：`CandidateMoveNet` 的网络结构参数。
-- `tests/`：训练环境、agent、arena、selfplay、数据检查器、动作编码器、数据读取器、模型测试。
+- `config/supervised.yaml`：监督学习训练参数。
+- `tests/`：训练环境、agent、arena、selfplay、数据检查器、动作编码器、数据读取器、模型和监督训练测试。
 - `README-trainer.md`：本文档。
 - `README-network.md`：神经网络组件与动作编码设计记录。
 
@@ -186,12 +193,12 @@ mask[9..511] = 0
 - `dataset.py` 已提供可选 PyTorch batch 转换；当前项目仍不强制依赖 PyTorch。
 - 当前 action id 是“当前局面合法动作列表编号”，不是全局固定动作空间。
 - 还没有批量环境。
-- 已有 JSONL 对局数据生成器、检查器和读取器，但还没有模型训练代码。
+- 已有 JSONL 对局数据生成器、检查器、读取器和监督学习训练代码。
 - reward 仍是最简单的终局奖励。
 
 ## 基础 Agent
 
-当前已有四个基础 agent：
+当前已有五个 agent：
 
 | 名称 | 命令行名称 | 行为 |
 | --- | --- | --- |
@@ -199,6 +206,7 @@ mask[9..511] = 0
 | `GreedyCaptureAgent` | `greedy` | 优先选择吃子数最多的动作；若并列，优先升王；仍并列则随机。 |
 | `MaterialAgent` | `material` | 克隆环境并逐个试走候选动作，选择走后材料分最高的动作。 |
 | `AlphaBetaAgent` | `alphabeta` | 使用 Alpha-Beta 搜索模拟未来若干步，叶子局面用可配置增强评估函数打分。 |
+| `SupervisedAgent` | `supervised` | 加载监督学习 checkpoint，对当前所有合法候选动作打分并选择分数最高者。 |
 
 示例：
 
@@ -348,14 +356,17 @@ PYTHONPATH=interface:trainer python3 trainer/arena.py --black random --white gre
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--black` | `random` | 黑方 agent，可选 `random`、`greedy`、`material`、`alphabeta`。 |
-| `--white` | `greedy` | 白方 agent，可选 `random`、`greedy`、`material`、`alphabeta`。 |
+| `--black` | `random` | 黑方 agent，可选 `random`、`greedy`、`material`、`alphabeta`、`supervised`。 |
+| `--white` | `greedy` | 白方 agent，可选 `random`、`greedy`、`material`、`alphabeta`、`supervised`。 |
 | `--games` | `100` | 对战局数。 |
 | `--max-plies` | `300` | 每局最大半回合数。超过后记为 `max_plies`。 |
 | `--log-interval` | `20` | 每隔多少局打印一次进度。 |
 | `--seed` | `1` | 随机种子。 |
 | `--material-config` | 默认配置 | 指定 `MaterialAgent` 的 YAML 参数文件。 |
 | `--alphabeta-config` | 默认配置 | 指定 `AlphaBetaAgent` 的 YAML 参数文件。 |
+| `--black-checkpoint` | 无 | 黑方 `SupervisedAgent` 的 checkpoint。 |
+| `--white-checkpoint` | 无 | 白方 `SupervisedAgent` 的 checkpoint。 |
+| `--device` | 自动 | `SupervisedAgent` 使用的设备，例如 `cpu`、`cuda`、`cuda:0`。 |
 
 输出示例：
 
@@ -383,6 +394,29 @@ PYTHONPATH=interface:trainer python3 trainer/arena.py --black material --white r
 PYTHONPATH=interface:trainer python3 trainer/arena.py --black alphabeta --white material --games 20
 ```
 
+评测监督学习模型：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/arena.py \
+  --black supervised \
+  --white alphabeta \
+  --black-checkpoint trainer/checkpoints/candidate_move_net_best.pt \
+  --games 20 \
+  --device cpu
+```
+
+比较两个不同 checkpoint：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/arena.py \
+  --black supervised \
+  --white supervised \
+  --black-checkpoint trainer/checkpoints/candidate_move_net_epoch_020.pt \
+  --white-checkpoint trainer/checkpoints/candidate_move_net_best.pt \
+  --games 50 \
+  --device cpu
+```
+
 ## 对局数据生成 Selfplay
 
 `selfplay.py` 用已有 agent 自动下棋，并把每一步保存成 JSONL 数据集。它的目标不是只保存人类可读棋谱，而是保存后续监督学习、价值学习和强化学习都能复用的结构化样本。
@@ -391,22 +425,75 @@ PYTHONPATH=interface:trainer python3 trainer/arena.py --black alphabeta --white 
 
 ```bash
 make interface
-PYTHONPATH=interface:trainer python3 trainer/selfplay.py --black alphabeta --white alphabeta --games 10 --max-plies 300 --output data/selfplay.jsonl
+PYTHONPATH=interface:trainer python3 trainer/selfplay.py --config trainer/config/selfplay.yaml
+```
+
+`selfplay.py` 会先读取 `--config` 指定的 YAML 配置，再用命令行中显式给出的参数覆盖 YAML。默认配置文件是：
+
+```text
+trainer/config/selfplay.yaml
+```
+
+例如临时换 seed 和输出文件：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/selfplay.py \
+  --config trainer/config/selfplay.yaml \
+  --seed 2026 \
+  --output data/alphabeta_selfplay_seed_2026.jsonl
 ```
 
 参数说明：
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--black` | `alphabeta` | 黑方 agent，可选 `random`、`greedy`、`material`、`alphabeta`。 |
-| `--white` | `alphabeta` | 白方 agent，可选 `random`、`greedy`、`material`、`alphabeta`。 |
+| `--config` | `trainer/config/selfplay.yaml` | selfplay YAML 配置文件。 |
+| `--black` | `alphabeta` | 黑方 agent，可选 `random`、`greedy`、`material`、`alphabeta`、`supervised`。 |
+| `--white` | `alphabeta` | 白方 agent，可选 `random`、`greedy`、`material`、`alphabeta`、`supervised`。 |
 | `--games` | `10` | 生成多少局。 |
-| `--max-plies` | `300` | 每局最大半回合数。达到上限仍未结束时，该局样本的 `value_target` 记为 `0`。 |
-| `--output` | 必填 | 输出 JSONL 文件路径。父目录不存在时会自动创建。 |
+| `--max-plies` | `400` | 每局最大半回合数。达到上限仍未结束时，该局样本的 `value_target` 记为 `0`。 |
+| `--output` | `data/selfplay.jsonl` | 输出 JSONL 文件路径。父目录不存在时会自动创建。 |
 | `--log-interval` | `1` | 每隔多少局打印一次进度。 |
 | `--seed` | `1` | 随机种子。 |
 | `--material-config` | 默认配置 | 指定 `MaterialAgent` 的 YAML 参数文件。 |
 | `--alphabeta-config` | 默认配置 | 指定 `AlphaBetaAgent` 的 YAML 参数文件。 |
+| `--black-checkpoint` | 无 | 黑方 `SupervisedAgent` 的 checkpoint。 |
+| `--white-checkpoint` | 无 | 白方 `SupervisedAgent` 的 checkpoint。 |
+| `--device` | 自动 | `SupervisedAgent` 使用的设备，例如 `cpu`、`cuda`、`cuda:0`。 |
+| `--append` | 关闭 | 追加写入 `--output`，并从已有文件的最大 `game_id + 1` 继续编号。 |
+| `--auto-output-name` | 开启 | 如果 `--output` 已存在，自动写入 `xxx_001.jsonl`、`xxx_002.jsonl` 等新文件，避免覆盖。 |
+| `--no-auto-output-name` | 无 | 临时关闭 YAML 中的 `auto_output_name`。 |
+| `--no-append` | 无 | 临时关闭 YAML 中的 `append`。 |
+
+默认 YAML 开启 `auto_output_name`，因此目标文件已存在时不会覆盖旧数据。批量生成数据时也可以选择追加模式。
+
+追加到同一个文件：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/selfplay.py \
+  --black alphabeta \
+  --white alphabeta \
+  --games 100 \
+  --output data/alphabeta_selfplay.jsonl \
+  --append
+```
+
+自动生成新文件，避免覆盖旧文件：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/selfplay.py \
+  --black alphabeta \
+  --white alphabeta \
+  --games 100 \
+  --output data/alphabeta_selfplay.jsonl \
+  --auto-output-name
+```
+
+如果 `data/alphabeta_selfplay.jsonl` 已存在，第二条命令会写入类似：
+
+```text
+data/alphabeta_selfplay_001.jsonl
+```
 
 JSONL 表示“一行一个 JSON 对象”。每一行是一手棋之前的训练样本，常用字段包括：
 
@@ -602,12 +689,117 @@ output = model(
 )
 ```
 
+## 监督学习训练
+
+`train_supervised.py` 用 JSONL 对局样本训练 `CandidateMoveNet`。训练目标有两个：
+
+```text
+policy loss: 模仿样本中的 selected_move
+value loss:  预测 value_target
+```
+
+常用命令：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/train_supervised.py data \
+  --config trainer/config/supervised.yaml \
+  --model-config trainer/config/model.yaml \
+  --checkpoint-dir trainer/checkpoints \
+  --device cpu
+```
+
+如果有 CUDA GPU，可以把 `--device cpu` 改成 `--device cuda`；如果不传 `--device`，脚本会自动优先使用 CUDA，否则使用 CPU。
+
+训练时会打印每个 epoch 的关键指标：
+
+启动阶段也会打印配置读取、数据集加载、数据划分、DataLoader 构建、模型初始化和 checkpoint 加载进度，避免大数据集或 resume 时出现长时间空白。
+
+```text
+train_loss           训练集总损失
+train_policy_acc     训练集动作模仿准确率
+train_value_mae      训练集 value 平均绝对误差
+val_loss             验证集总损失
+val_policy_acc       验证集动作模仿准确率
+val_value_mae        验证集 value 平均绝对误差
+elapsed              当前这次命令已经训练的时间
+cumulative_train_time 同一组参数和数据路径累计训练时间
+```
+
+默认保存：
+
+```text
+trainer/checkpoints/candidate_move_net_latest.pt
+trainer/checkpoints/candidate_move_net_best.pt
+trainer/checkpoints/candidate_move_net_epoch_<final_epoch>.pt
+trainer/checkpoints/training_time.json
+trainer/checkpoints/training_log_<experiment_key>.csv
+```
+
+其中：
+
+- `candidate_move_net_latest.pt`：每个 epoch 后覆盖更新，便于继续训练。
+- `candidate_move_net_best.pt`：验证集 loss 最好时覆盖更新。
+- `candidate_move_net_epoch_<final_epoch>.pt`：本次训练命令结束时额外保存一份带 epoch 编号的 checkpoint，避免只有 latest 被下次训练覆盖。
+
+默认不会保存所有中间 epoch，以免长时间训练产生大量 `.pt` 文件。确实需要保存每个 epoch 时，可以显式加入：
+
+```bash
+--save-every-epoch
+```
+
+checkpoint 中包含：
+
+```text
+model_state_dict          模型权重
+optimizer_state_dict      优化器状态，便于继续训练
+supervised_config         训练参数
+model_config              模型结构参数
+train_metrics             训练指标
+val_metrics               验证指标
+run_elapsed_seconds       当前这次训练命令耗时
+cumulative_train_seconds  累计训练秒数
+cumulative_train_time     累计训练时间，格式为 HH:MM:SS
+```
+
+继续训练：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/train_supervised.py data \
+  --resume trainer/checkpoints/candidate_move_net_latest.pt \
+  --checkpoint-dir trainer/checkpoints
+```
+
+累计训练时间有两种接力方式：
+
+- 使用 `--resume` 时，会从 checkpoint 中读取已有累计时间。
+- 不使用 `--resume` 但配置、模型参数和数据路径相同时，会从 `training_time.json` 中读取同一实验的累计时间。
+
+CSV 训练日志会按同一实验追加写入，不覆盖旧记录。默认每个 epoch 写一行，字段包括：
+
+```text
+epoch
+train_loss / train_policy_loss / train_value_loss
+train_policy_accuracy / train_value_mae
+val_loss / val_policy_loss / val_value_loss
+val_policy_accuracy / val_value_mae
+best_val_loss
+run_elapsed_seconds / run_elapsed_time
+cumulative_train_seconds / cumulative_train_time
+```
+
+长时间训练时，可以在 `trainer/config/supervised.yaml` 中调大：
+
+```yaml
+csv_log_interval_epochs: 5
+```
+
+这表示每 5 个 epoch 写一行 CSV；最后一个 epoch 总会写入。CSV 使用逐行追加写入，不会把历史 CSV 全部读入内存，适合隔夜训练。
+
 ## 后续方向
 
 建议后续依次实现：
 
-1. 监督学习脚本，使用 selfplay 数据模仿 AlphaBeta。
-2. 训练日志、模型保存与评测流程。
-3. 将神经网络接入 agent 或搜索评测流程。
-4. 更大规模数据生成与训练。
-5. 搜索与强化学习流程。
+1. 将训练好的神经网络接入 agent 或 GUI。
+2. 增加模型评测脚本，对比 random/material/alphabeta。
+3. 更大规模数据生成与训练。
+4. 搜索与强化学习流程。

@@ -2,6 +2,8 @@ import unittest
 from tempfile import TemporaryDirectory
 from pathlib import Path
 
+import torch
+
 from agents import (
     AlphaBetaAgent,
     AlphaBetaConfig,
@@ -9,6 +11,7 @@ from agents import (
     MaterialConfig,
     MaterialAgent,
     RandomAgent,
+    SupervisedAgent,
     evaluate_enhanced_position,
     load_alphabeta_config,
     load_material_config,
@@ -16,6 +19,7 @@ from agents import (
     material_score_for_side,
 )
 from draughts_env import Move
+from model import CandidateMoveNet, ModelConfig
 
 
 class AgentTests(unittest.TestCase):
@@ -48,6 +52,26 @@ class AgentTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             make_agent("unknown")
+
+    def test_supervised_agent_loads_checkpoint_and_returns_legal_action(self):
+        with TemporaryDirectory() as tmp_dir:
+            checkpoint_path = create_zero_supervised_checkpoint(Path(tmp_dir))
+            agent = SupervisedAgent(str(checkpoint_path), device="cpu")
+
+            action_id = agent.select_action(
+                {"side_to_move": 0, "squares": [0] * 50},
+                [
+                    Move(action_id=3, path=(16, 21), captures=()),
+                    Move(action_id=7, path=(17, 22), captures=()),
+                ],
+                FakeObservationEnv(),
+            )
+
+        self.assertEqual(action_id, 3)
+
+    def test_make_supervised_agent_requires_checkpoint(self):
+        with self.assertRaises(ValueError):
+            make_agent("supervised")
 
     def test_material_score_for_side(self):
         observation = {"squares": [0] * 50}
@@ -200,6 +224,45 @@ class FakeMaterialEnv:
 
     def legal_actions(self):
         return []
+
+
+class FakeObservationEnv:
+    def observation(self):
+        return [[[0 for _col in range(10)] for _row in range(10)] for _channel in range(6)]
+
+
+def create_zero_supervised_checkpoint(directory: Path) -> Path:
+    config = ModelConfig(
+        conv_channels=4,
+        conv_layers=1,
+        board_feature_dim=8,
+        move_embedding_dim=6,
+        hidden_dim=5,
+    )
+    model = CandidateMoveNet(config=config)
+    for parameter in model.parameters():
+        torch.nn.init.constant_(parameter, 0.0)
+
+    path = directory / "supervised.pt"
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "model_config": {
+                "board_channels": config.board_channels,
+                "board_size": config.board_size,
+                "conv_channels": config.conv_channels,
+                "conv_layers": config.conv_layers,
+                "conv_kernel_size": config.conv_kernel_size,
+                "conv_padding": config.conv_padding,
+                "board_feature_dim": config.board_feature_dim,
+                "move_feature_dim": config.move_feature_dim,
+                "move_embedding_dim": config.move_embedding_dim,
+                "hidden_dim": config.hidden_dim,
+            },
+        },
+        path,
+    )
+    return path
 
 
 def make_observation(side_to_move, black_men, white_men, game_result=0):

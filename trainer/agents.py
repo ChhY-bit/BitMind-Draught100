@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
+import torch
+
 from draughts_env import Move
+from model import CandidateMoveNet, ModelConfig
+from move_encoding import encode_legal_moves
 
 DEFAULT_MATERIAL_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "material.yaml"
 DEFAULT_ALPHABETA_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "alphabeta.yaml"
@@ -230,6 +234,69 @@ class AlphaBetaAgent(Agent):
         return value
 
 
+@dataclass
+class SupervisedAgent(Agent):
+    checkpoint_path: str
+    device: Optional[str] = None
+    name: str = "supervised"
+
+    def __post_init__(self) -> None:
+        if not self.checkpoint_path:
+            raise ValueError("SupervisedAgent requires a checkpoint path")
+        self.device_obj = torch.device(
+            self.device if self.device else ("cuda" if torch.cuda.is_available() else "cpu")
+        )
+        checkpoint = torch.load(self.checkpoint_path, map_location=self.device_obj)
+        model_config = load_model_config_from_checkpoint(checkpoint)
+        self.model = CandidateMoveNet(config=model_config).to(self.device_obj)
+        state_dict = checkpoint.get("model_state_dict", checkpoint)
+        self.model.load_state_dict(state_dict)
+        self.model.eval()
+
+    def select_action(
+        self,
+        observation: Dict[str, object],
+        legal_actions: Sequence[Move],
+        env=None,
+    ) -> int:
+        if not legal_actions:
+            raise ValueError("SupervisedAgent received no legal actions")
+        if env is None:
+            raise ValueError("SupervisedAgent requires an environment with observation()")
+
+        move_dicts = [move_to_dict(move) for move in legal_actions]
+        with torch.no_grad():
+            observation_tensor = torch.tensor(
+                [env.observation()],
+                dtype=torch.float32,
+                device=self.device_obj,
+            )
+            move_tensor = torch.tensor(
+                [encode_legal_moves(move_dicts)],
+                dtype=torch.float32,
+                device=self.device_obj,
+            )
+            move_mask = torch.ones((1, len(legal_actions)), dtype=torch.float32, device=self.device_obj)
+            output = self.model(observation_tensor, move_tensor, move_mask)
+            selected_index = int(output["policy_logits"][0].argmax().item())
+        return legal_actions[selected_index].action_id
+
+
+def load_model_config_from_checkpoint(checkpoint: object) -> ModelConfig:
+    if isinstance(checkpoint, dict) and isinstance(checkpoint.get("model_config"), dict):
+        return ModelConfig(**checkpoint["model_config"])
+    return ModelConfig()
+
+
+def move_to_dict(move: Move) -> Dict[str, object]:
+    return {
+        "action_id": move.action_id,
+        "path": list(move.path),
+        "captures": list(move.captures),
+        "is_capture": bool(move.is_capture),
+    }
+
+
 def promotion_score(move: Move, observation: Dict[str, object]) -> int:
     squares = observation["squares"]
     side_to_move = int(observation["side_to_move"])
@@ -437,6 +504,8 @@ def make_agent(
     seed: Optional[int] = None,
     material_config_path: Optional[str] = None,
     alphabeta_config_path: Optional[str] = None,
+    supervised_checkpoint_path: Optional[str] = None,
+    device: Optional[str] = None,
 ) -> Agent:
     normalized = name.strip().lower()
     if normalized == "random":
@@ -447,8 +516,12 @@ def make_agent(
         return MaterialAgent(seed=seed, config_path=material_config_path)
     if normalized in {"alphabeta", "alpha-beta", "ab"}:
         return AlphaBetaAgent(seed=seed, config_path=alphabeta_config_path)
+    if normalized in {"supervised", "supervised-agent", "sl"}:
+        if supervised_checkpoint_path is None:
+            raise ValueError("supervised agent requires a checkpoint path")
+        return SupervisedAgent(checkpoint_path=supervised_checkpoint_path, device=device)
     raise ValueError(f"unknown agent: {name}")
 
 
 def available_agents() -> List[str]:
-    return ["random", "greedy", "material", "alphabeta"]
+    return ["random", "greedy", "material", "alphabeta", "supervised"]
