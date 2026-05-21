@@ -86,7 +86,7 @@ make interface-test
 如果看到类似：
 
 ```text
-Ran 3 tests in 0.001s
+Ran 4 tests in 0.001s
 
 OK
 ```

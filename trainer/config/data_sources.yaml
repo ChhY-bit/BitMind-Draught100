@@ -1,0 +1,16 @@
+# 监督训练数据源权重配置示例。
+# 当前解析器支持 source_N_path / source_N_policy_weight / source_N_value_weight / source_N_name。
+# 如果只用旧命令 `trainer/train_supervised.py data`，等价于所有样本 policy_weight=1、value_weight=1。
+
+# AlphaBeta 老师数据：建议保留完整 policy 权重，因为它目前仍强于监督模型。
+source_1_path: data/alphabeta_data
+source_1_policy_weight: 1.0
+source_1_value_weight: 1.0
+source_1_name: alphabeta
+
+# 示例：如果后续有自博弈或其他结果数据，且动作质量没有保证，
+# 可以先不模仿其动作，只用最终胜负结果训练 value head。
+# source_2_path: data/value_selfplay.jsonl
+# source_2_policy_weight: 0.0
+# source_2_value_weight: 1.0
+# source_2_name: value_selfplay

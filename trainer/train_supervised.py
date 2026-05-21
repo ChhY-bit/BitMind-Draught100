@@ -14,7 +14,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Subset
 
-from dataset import DraughtsJsonlDataset, collate_batch, to_torch_batch
+from dataset import DataSource, DraughtsJsonlDataset, collate_batch, to_torch_batch
 from model import CandidateMoveNet, DEFAULT_MODEL_CONFIG_PATH, load_model_config
 
 
@@ -61,8 +61,16 @@ def main() -> None:
     print(f"supervised: using device={device}", flush=True)
     set_seed(config.seed)
 
-    print(f"supervised: loading dataset from {', '.join(args.data)}", flush=True)
-    dataset = DraughtsJsonlDataset(args.data)
+    data_sources = resolve_data_sources(args.data, args.source_config, args.source)
+    data_source_descriptions = describe_data_sources(data_sources)
+    experiment_data_paths = experiment_data_identity(
+        args.data,
+        args.source_config,
+        args.source,
+        data_source_descriptions,
+    )
+    print(f"supervised: loading dataset from {', '.join(data_source_descriptions)}", flush=True)
+    dataset = DraughtsJsonlDataset.from_sources(data_sources)
     print(f"supervised: loaded {len(dataset)} samples", flush=True)
     train_indices, val_indices = split_indices(len(dataset), config.validation_split, config.seed)
     print(
@@ -81,7 +89,7 @@ def main() -> None:
         checkpoint_dir,
         config,
         model_config,
-        args.data,
+        experiment_data_paths,
     )
     best_val_loss: Optional[float] = None
 
@@ -111,7 +119,7 @@ def main() -> None:
 
     run_start = time.perf_counter()
     run_started_at_unix = time.time()
-    key = experiment_key(config, model_config, args.data)
+    key = experiment_key(config, model_config, experiment_data_paths)
     csv_log_path = checkpoint_dir / f"training_log_{key}.csv"
     latest_checkpoint: Optional[Path] = None
     final_epoch = start_epoch + config.epochs
@@ -133,7 +141,7 @@ def main() -> None:
             epoch,
             config,
             model_config,
-            args.data,
+            experiment_data_paths,
             train_metrics,
             val_metrics,
             elapsed_seconds,
@@ -148,7 +156,7 @@ def main() -> None:
                 epoch,
                 config,
                 model_config,
-                args.data,
+                experiment_data_paths,
                 train_metrics,
                 val_metrics,
                 elapsed_seconds,
@@ -163,7 +171,7 @@ def main() -> None:
                 epoch,
                 config,
                 model_config,
-                args.data,
+                experiment_data_paths,
                 train_metrics,
                 val_metrics,
                 elapsed_seconds,
@@ -175,7 +183,7 @@ def main() -> None:
             checkpoint_dir,
             config,
             model_config,
-            args.data,
+            experiment_data_paths,
             cumulative_seconds,
             elapsed_seconds,
             epoch,
@@ -198,7 +206,7 @@ def main() -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train CandidateMoveNet with supervised data.")
-    parser.add_argument("data", nargs="+", help="JSONL data file(s) or directory path(s).")
+    parser.add_argument("data", nargs="*", help="JSONL data file(s) or directory path(s).")
     parser.add_argument("--config", default=str(DEFAULT_SUPERVISED_CONFIG_PATH))
     parser.add_argument("--model-config", default=str(DEFAULT_MODEL_CONFIG_PATH))
     parser.add_argument("--checkpoint-dir", default=str(DEFAULT_CHECKPOINT_DIR))
@@ -209,7 +217,122 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Save candidate_move_net_epoch_XXX.pt after every epoch. Defaults to final epoch only.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--source-config",
+        default=None,
+        help="YAML-like file that lists weighted data sources.",
+    )
+    parser.add_argument(
+        "--source",
+        action="append",
+        default=[],
+        metavar="PATH:POLICY_WEIGHT:VALUE_WEIGHT[:NAME]",
+        help="Add one weighted data source. Can be repeated.",
+    )
+    args = parser.parse_args()
+    if not args.data and not args.source_config and not args.source:
+        parser.error("at least one data path, --source-config, or --source is required")
+    return args
+
+
+def resolve_data_sources(
+    data_paths: Sequence[str],
+    source_config_path: Optional[str],
+    source_args: Sequence[str],
+) -> list[DataSource]:
+    sources = [DataSource(path=str(path)) for path in data_paths]
+    if source_config_path is not None:
+        sources.extend(load_data_source_config(source_config_path))
+    for raw_source in source_args:
+        sources.append(parse_data_source_arg(raw_source))
+    if not sources:
+        raise ValueError("at least one data source is required")
+    return sources
+
+
+def parse_data_source_arg(raw_source: str) -> DataSource:
+    parts = raw_source.split(":")
+    if len(parts) not in {3, 4}:
+        raise ValueError(
+            "--source must use PATH:POLICY_WEIGHT:VALUE_WEIGHT[:NAME] format"
+        )
+    path, policy_weight, value_weight = parts[:3]
+    name = parts[3] if len(parts) == 4 else ""
+    return DataSource(
+        path=path,
+        policy_weight=float(policy_weight),
+        value_weight=float(value_weight),
+        name=name,
+    )
+
+
+def load_data_source_config(config_path: str | Path) -> list[DataSource]:
+    path = Path(config_path)
+    if not path.exists():
+        raise FileNotFoundError(f"data source config not found: {path}")
+
+    groups: dict[str, dict[str, str]] = {}
+    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if ":" not in line:
+            raise ValueError(f"invalid data source config line {line_number}: {raw_line}")
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        prefix, field = split_source_key(key, line_number)
+        groups.setdefault(prefix, {})[field] = value
+
+    sources: list[DataSource] = []
+    for prefix in sorted(groups, key=source_sort_key):
+        values = groups[prefix]
+        if "path" not in values:
+            raise ValueError(f"{prefix}_path is required in data source config")
+        sources.append(
+            DataSource(
+                path=values["path"],
+                policy_weight=float(values.get("policy_weight", "1.0")),
+                value_weight=float(values.get("value_weight", "1.0")),
+                name=values.get("name", ""),
+            )
+        )
+    return sources
+
+
+def split_source_key(key: str, line_number: int) -> tuple[str, str]:
+    for suffix in ("_policy_weight", "_value_weight", "_path", "_name"):
+        if key.endswith(suffix):
+            return key[: -len(suffix)], suffix[1:]
+    raise ValueError(f"unknown data source config key on line {line_number}: {key}")
+
+
+def source_sort_key(prefix: str) -> tuple[str, int]:
+    tail = prefix.rsplit("_", 1)[-1]
+    return (prefix[: -len(tail)], int(tail) if tail.isdigit() else 0)
+
+
+def describe_data_sources(sources: Sequence[DataSource]) -> list[str]:
+    return [
+        (
+            f"{source.path}"
+            f"|policy={source.policy_weight:g}"
+            f"|value={source.value_weight:g}"
+            f"|name={source.name or 'default'}"
+        )
+        for source in sources
+    ]
+
+
+def experiment_data_identity(
+    data_paths: Sequence[str],
+    source_config_path: Optional[str],
+    source_args: Sequence[str],
+    data_source_descriptions: Sequence[str],
+) -> list[str]:
+    if source_config_path is None and not source_args:
+        return list(data_paths)
+    return list(data_source_descriptions)
 
 
 def load_supervised_config(config_path: str | Path) -> SupervisedConfig:
@@ -361,13 +484,27 @@ def compute_loss(
     batch: dict[str, object],
     value_loss_weight: float,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    policy_loss = nn.functional.cross_entropy(
+    policy_loss_per_sample = nn.functional.cross_entropy(
         output["policy_logits"],
         batch["policy_target_index"],
+        reduction="none",
     )
-    value_loss = nn.functional.mse_loss(output["value"], batch["value_target"])
+    value_loss_per_sample = nn.functional.mse_loss(
+        output["value"],
+        batch["value_target"],
+        reduction="none",
+    )
+    policy_loss = weighted_mean(policy_loss_per_sample, batch["policy_weight"])
+    value_loss = weighted_mean(value_loss_per_sample, batch["value_weight"])
     loss = policy_loss + value_loss_weight * value_loss
     return loss, policy_loss, value_loss
+
+
+def weighted_mean(values: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+    total_weight = weights.sum()
+    if float(total_weight.item()) <= 0:
+        return values.new_tensor(0.0)
+    return (values * weights).sum() / total_weight
 
 
 def move_batch_to_device(batch: dict[str, object], device: torch.device) -> dict[str, object]:

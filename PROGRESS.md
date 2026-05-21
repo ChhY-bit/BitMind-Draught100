@@ -1,119 +1,355 @@
-# 项目进度记录
+# 项目进度摘要
 
-本文档只保留阶段性摘要，详细规则以 `SPEC.md` 为准，工程约束以 `AGENTS.md` 为准。
+本文档用于在上下文不足时快速恢复工程状态。详细棋规看 `SPEC.md`，协作约束看 `AGENTS.md`，整体结构看 `ARCHITECTURE.md`。
 
 ## 当前阶段
 
-C 底层引擎已形成可测试、可调试的第一版规则内核。实现集中在 `engine/`：
+项目已经完成：
 
-- `include/draughts.h`：公共接口与基础数据结构。
-- `src/board.c`：棋盘编号、局面状态、状态复制、终局判断。
-- `src/move.c`：合法动作生成、动作严格校验、动作执行。
-- `tests/test_board.c`、`tests/test_moves.c`：单元测试。
-- `tests/random_play.c`：随机对局压力测试。
-- `tools/board_viewer.c`：临时文本棋盘、固定场景与简易命令行对局器。
-- `interface/`：C-Python 接口层，包含 C 侧粗粒度环境封装和 Python `ctypes` 包装。
-- `gui/simple_gui.py`：Python GUI v0，支持人类、随机AI、监督模型AI组合对局，点击棋子与落点执行动作。
-- `trainer/env.py`：训练用标准化环境，包装 C-Python 接口并输出固定 observation 与 action mask。
-- `trainer/agents.py`、`trainer/arena.py`：基础 agent、监督学习模型 agent 与批量对战评测器。
+- C 规则引擎与随机压力测试。
+- C-Python 接口与 Python 标准环境。
+- Tkinter GUI，可人类/随机AI/监督模型AI对局。
+- 传统基线 agent：random、greedy、material、alphabeta。
+- 候选动作打分神经网络 `CandidateMoveNet`。
+- selfplay JSONL 数据生成、检查、读取、训练 batch 组装。
+- supervised 监督训练、checkpoint 保存、CSV 日志、累计训练时间。
+- `SupervisedAgent`，可加载 `.pt/.pth` 模型并在 arena / selfplay / GUI 中决策。
+- 监督训练数据源权重，支持按来源分别设置 policy/value loss 权重。
 
-## 已实现规则
+当前已经跳过“模型辅助 AlphaBeta”。曾实验过 `SupervisedAgent` 的 temperature/top-k/epsilon 探索自博弈，但未带来稳定棋力提升，相关接口已从主线清理。下一步应转向更正式的自博弈改进或强化学习闭环。
 
-- 100 格国际跳棋棋盘，外部棋位编号为 `1-50`，内部数组为 `0-49`。
-- 初始局面：黑方 `1-20`，白方 `31-50`，黑方先手。
-- 普通子：非吃子只能向前，吃子可四向，支持连跳。
-- 王：支持远程普通移动、远程吃子、多个落点与连跳。
-- 吃子强制；所有普通子和王共同参与“最多吃子”规则；同为最多的路线全部保留。
-- 被吃棋子在整着结束前仍作为屏障，且不能重复跳过。
-- 普通子最终停在对方底线才升王；跳吃经过底线但离开时不升王。
-- `draughts_apply_move` 已改为严格执行当前合法动作，不接受只满足结构但违反规则的动作。
-- 终局判断已支持无子、当前方无合法动作；和棋枚举保留，但和棋规则暂不实现。
+## 规则内核
 
-## 主要接口
+C 引擎在 `engine/`，规则以 `SPEC.md` 为准。核心事实：
 
-公共接口见 `engine/include/draughts.h`。当前核心接口包括：
+- 棋位编号 `1..50`，左上角非合法棋位，第一行合法位编号 `1..5`，第二行从 `6` 开始。
+- 初始局面：黑方 `1..20`，白方 `31..50`，黑方先手。
+- 普通子非吃子只能向前；普通子吃子可四向并可连跳。
+- 王支持远程移动、远程吃子、多落点与连跳。
+- 强制吃子，且所有路线按“最多吃子”过滤。
+- 被吃棋子在整着结束前仍作为屏障，不能重复跳过。
+- 普通子只有最终停在对方底线才升王。
+- `draughts_apply_move` 严格执行当前合法动作，不接受结构合法但规则非法的动作。
+- 终局：无子或当前方无合法动作。和棋枚举存在，但和棋规则按当前约定暂不实现。
 
-- `draughts_init`、`draughts_clear`、`draughts_copy`
-- `draughts_get_piece`、`draughts_set_piece`
-- `draughts_get_side_to_move`、`draughts_set_side_to_move`
-- `draughts_generate_legal_moves`
-- `draughts_is_legal_move`
-- `draughts_apply_move`
-- `draughts_get_game_result`
+核心 C API 位于 `engine/include/draughts.h`：
 
-`DraughtsMove` 使用完整路径 `path[]` 和被吃棋子列表 `captures[]` 表示普通移动、吃子与连跳。
+```text
+draughts_init / draughts_clear / draughts_copy
+draughts_get_piece / draughts_set_piece
+draughts_get_side_to_move / draughts_set_side_to_move
+draughts_generate_legal_moves
+draughts_is_legal_move
+draughts_apply_move
+draughts_get_game_result
+```
 
-Python 侧优先使用 `interface.DraughtsEnv`，通过 `reset()`、`legal_moves()`、`step(action_id)` 和 `observation()` 调用 C 环境接口。规则逻辑仍封闭在 C 内部。
+`DraughtsMove` 用 `path[]` 和 `captures[]` 表示完整路线。
 
-GUI 侧通过同一个 Python 接口推进棋局。当前已实现人类、随机AI、监督模型AI之间的组合对局；启动和新建对局时可选择双方决策源，若选择监督模型AI则弹出文件选择框为对应方加载 `.pt/.pth` checkpoint。人类方使用点击棋子、显示落点、点击落点或双击动作列表执行；随机AI方从当前合法动作中随机选取；监督模型AI方把当前局面编码为训练侧 observation 后调用 `SupervisedAgent` 选最高分动作。左侧显示棋谱，右侧含中文状态、合法动作和彩色日志框，王棋统一显示为 `K`。GUI 已支持悔棋，方式是重置 C 环境并重放动作历史。
+## Python 接口与 GUI
 
-训练侧当前处于“传统搜索基线 + 标准环境”阶段：
+Python 侧优先使用 `interface.DraughtsEnv`：
 
-- `trainer/env.py`：`StandardDraughtsEnv` 包装 `interface.DraughtsEnv`，提供 `reset()`、`step(action_id)`、`observation()`、`raw_observation()`、`legal_actions()`、`action_mask()`、`clone()`。`clone()` 依赖 C 侧环境结构体直接复制，不再从开局重放历史。
-- observation 为 `6x10x10` 嵌套列表：当前方普通子、当前方王、对方普通子、对方王、合法棋位、当前行棋方平面。当前不做棋盘翻转。
-- action 原始字段仍保留“当前局面合法动作列表编号”和长度 `512` 的 `action_mask`，用于兼容与调试；神经网络路线改为候选动作打分，使用 `move_encoding.py` 将每个合法动作编码为固定长度向量。
-- `trainer/agents.py`：已有 `RandomAgent`、`GreedyCaptureAgent`、`MaterialAgent`、`AlphaBetaAgent`、`SupervisedAgent`。所有 agent 都只通过环境接口读取局面和执行动作，规则逻辑仍在 C 内。
-- `SupervisedAgent`：加载 `CandidateMoveNet` checkpoint，对当前所有合法动作编码后用 policy logits 选分数最高者。模型输入仍是“己方/对方”视角，所以同一个 checkpoint 可执黑或执白；`arena.py` 和 `selfplay.py` 支持 `--black-checkpoint`、`--white-checkpoint` 为双方分别加载不同模型。
-- `MaterialAgent`：一步试走型材料评估，逐个 `clone()` 并 `step()` 当前合法动作，按 `trainer/config/material.yaml` 的普通子、王、胜局、和棋分值评分。
-- `AlphaBetaAgent`：传统 Alpha-Beta 搜索基线，默认深度在 `trainer/config/alphabeta.yaml`。搜索只调用 `env.clone()` 与 `env.step()`；叶子局面用增强静态评估，特征包括材料、普通子推进、中心控制、边线惩罚、底线守卫。暂未加入机动性/威胁检测，因为这会频繁生成额外合法动作并拖慢 Python 搜索。
-- `trainer/arena.py`：批量评测器，支持 `--black/--white random|greedy|material|alphabeta|supervised`、`--material-config`、`--alphabeta-config`、`--black-checkpoint`、`--white-checkpoint`，统计胜负、达到最大步数局数、平均半回合数和耗时。
-- `trainer/selfplay.py`：对局数据生成器，支持用任意两个现有 agent 自动下棋并写出 JSONL。默认读取 `trainer/config/selfplay.yaml`，命令行显式参数可覆盖 YAML。每一行是一手棋之前的训练样本，包含 `raw_squares`、`observation`、`legal_action_ids`、`legal_moves`、`action_mask`、`selected_action_id`、`selected_move`、`final_result`、`max_plies_reached`、`value_target`。`value_target` 使用当前行棋方视角：胜 `1`，负 `-1`，和棋或达到最大步数未结束 `0`。支持 `--append` 追加写入并延续 `game_id`，也支持 `--auto-output-name` 在目标文件已存在时自动生成 `_001/_002` 新文件名以避免覆盖。
-- `trainer/config/selfplay.yaml`：selfplay 数据生成参数，带中文注释。当前默认 `alphabeta` 对 `alphabeta`，`games=10`，`max_plies=400`，输出 `data/selfplay.jsonl`，并开启 `auto_output_name` 以避免误覆盖旧数据。
-- `trainer/inspect_dataset.py`：JSONL 数据检查器，支持单文件、多文件或目录输入。统计文件数、样本数、局数、黑胜/白胜/和棋/截断局数、平均半回合数、`value_target` 分布、agent 分布，并验证必需字段、`6x10x10` observation、长度 50 的 `raw_squares`、长度 512 的 `action_mask`、动作合法性和值标签范围。
-- `trainer/move_encoding.py`：候选动作编码器。棋位 `1..50` 转 10x10 坐标并归一化；当前上限 `MAX_PATH_POINTS=10`、`MAX_CAPTURES=9`，动作向量 `MOVE_FEATURE_DIM=45`，包含起终点、路径长度、吃子数、是否吃子、padding 后的 path/captures 坐标。现有 `data/` 扫描最大路径点数为 6、最大吃子数为 5。
-- `trainer/dataset.py`：JSONL 数据读取器。`iter_jsonl_samples()` 支持流式读取文件或目录；`DraughtsJsonlDataset` 是内存数据集，返回 `observation`、`action_mask`、`policy_target`、`move_features`、`policy_target_index`、`value_target`、`metadata`；`collate_batch()` 会将不同候选动作数 padding 成 `[B, M, 45]` 并给出 `move_mask`；`to_torch_batch()` 在安装 PyTorch 时把 batch 转成 tensor，但当前不强制依赖 PyTorch。
-- `trainer/model.py`：第一版候选动作打分网络 `CandidateMoveNet`，结构参数由 `trainer/config/model.yaml` 配置并做基础校验。输入 `observation [B,6,10,10]`、`move_features [B,M,45]`、`move_mask [B,M]`；CNN board encoder 默认输出 256 维局面特征，MLP move encoder 默认输出 128 维动作特征，score head 输出 `policy_logits [B,M]`，value head 输出 `value [B]`；padding 动作 logit 置为 `-1e9`。
-- `trainer/train_supervised.py`：第一版监督学习训练脚本。读取 JSONL 数据训练 `CandidateMoveNet`，损失为 `CrossEntropy(policy_logits, policy_target_index) + value_loss_weight * MSE(value, value_target)`；支持 `--resume` 续训、CPU/CUDA 设备选择。启动阶段会立即打印配置读取、数据集加载、数据划分、DataLoader 构建、模型初始化和 checkpoint 加载进度，避免大数据集启动时长时间无输出。默认省空间保存策略为持续更新 `latest`、验证最佳时更新 `best`、本次训练结束时保存最终 `epoch_XXX`；只有显式传入 `--save-every-epoch` 才保存所有中间 epoch。checkpoint 与 `trainer/checkpoints/training_time.json` 记录当前运行耗时和同一组参数/数据的累计训练时间。训练指标还会追加写入 `training_log_<experiment_key>.csv`，使用逐行追加，不读入历史 CSV，适合长时间训练。
-- `trainer/config/supervised.yaml`：监督学习训练参数，含 epoch、batch size、学习率、value loss 权重、验证集比例、随机种子、shuffle、终端日志间隔、CSV epoch 记录间隔和 DataLoader 子进程数，带中文注释。
-- `trainer/README-network.md`：神经网络组件设计记录。当前记录候选动作打分模型思路、棋盘输入、动作编码器 v1、dataset 输出、`CandidateMoveNet` 结构；后续训练脚本继续写入该文档。
-- `trainer/assets/candidate_move_net.svg`：当前 `CandidateMoveNet` 的结构示意图，展示棋盘分支、动作分支、score head、value head、mask 和 YAML 参数。
-- `trainer/tests/`：trainer 单元测试目录，`make trainer-test` 使用 unittest discovery 自动运行 `test_*.py`，后续新增测试无需修改 Makefile。
-- 经验现象：`AlphaBetaAgent` 默认深度 2 明显强于 `random/material`，对 `alphabeta` 自战则互有胜负；速度比随机慢得多但可作为早期强基线和后续监督学习老师。
+```text
+reset()
+observation()
+legal_moves()
+step(action_id)
+clone()
+```
+
+规则逻辑仍封闭在 C 内部，Python 只按 `action_id` 推进局面。
+
+GUI 在 `gui/simple_gui.py`：
+
+- 运行：`PYTHONPATH=interface:trainer python3 gui/simple_gui.py`
+- 支持人类、随机AI、监督模型AI任意组合。
+- 选择监督模型AI时弹出 `.pt/.pth` 文件选择框。
+- 支持中文界面、棋盘编号、棋谱、日志、合法动作列表、悔棋、暂停/继续AI、AI走一步。
+- 悔棋通过重置 C 环境并重放 `action_id` 历史实现。
+
+## Trainer 环境
+
+`trainer/env.py` 的 `StandardDraughtsEnv` 包装 C-Python 接口：
+
+```text
+reset()
+step(action_id)
+observation()
+raw_observation()
+legal_actions()
+action_mask()
+clone()
+```
+
+训练 observation 为 `6x10x10`：
+
+```text
+0 当前方普通子
+1 当前方王
+2 对方普通子
+3 对方王
+4 合法棋位
+5 当前行棋方平面
+```
+
+当前不做棋盘翻转，因为输入本身是“当前方/对方”视角。原始 `action_id` 仍是当前局面合法动作列表编号，`action_mask` 长度为 `512`，主要用于兼容和调试。
+
+## Agent
+
+`trainer/agents.py` 已有：
+
+```text
+RandomAgent       random
+GreedyCaptureAgent greedy
+MaterialAgent     material
+AlphaBetaAgent    alphabeta
+SupervisedAgent   supervised
+```
+
+- `MaterialAgent`：一步试走材料评估，配置在 `trainer/config/material.yaml`。
+- `AlphaBetaAgent`：传统 Alpha-Beta 搜索，默认深度和增强评估在 `trainer/config/alphabeta.yaml`。叶子评估含材料、推进、中心、边线、底线守卫。
+- `SupervisedAgent`：加载 `CandidateMoveNet` checkpoint，对所有合法动作编码并根据 policy logits 贪心选择最高分动作。同一 checkpoint 可执黑或执白。
+
+`trainer/arena.py` 支持批量评测：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/arena.py \
+  --black supervised \
+  --white alphabeta \
+  --black-checkpoint trainer/checkpoints/candidate_move_net_best.pt \
+  --games 20 \
+  --device cpu
+```
+
+## 数据生成与数据集
+
+`trainer/selfplay.py` 生成 JSONL 训练数据。默认读取：
+
+```text
+trainer/config/selfplay.yaml
+```
+
+命令行显式参数覆盖 YAML。常用命令：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/selfplay.py
+```
+
+或：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/selfplay.py \
+  --seed 2026 \
+  --output data/alphabeta_selfplay_seed_2026.jsonl
+```
+
+`selfplay.yaml` 当前默认 `alphabeta` vs `alphabeta`、`games=10`、`max_plies=400`、`auto_output_name=1`。支持：
+
+```text
+--append            追加写入并延续 game_id
+--auto-output-name  文件已存在时自动生成 _001/_002
+--no-auto-output-name
+```
+
+JSONL 每行是一手棋之前的样本，关键字段：
+
+```text
+raw_squares
+observation
+legal_action_ids
+legal_moves
+action_mask
+selected_action_id
+selected_move
+final_result
+max_plies_reached
+value_target
+```
+
+`value_target` 为当前行棋方视角：胜 `1`，负 `-1`，和棋或达到最大半回合上限 `0`。
+
+数据工具：
+
+```text
+trainer/inspect_dataset.py  检查 JSONL 合法性和统计分布
+trainer/dataset.py          读取 JSONL，构造训练 item / batch / torch tensor
+```
+
+注意：`DraughtsJsonlDataset` 当前会把样本读入内存。数据很大时应分 shard 训练，未来再实现 streaming dataset。
+
+## 动作编码与网络
+
+`trainer/move_encoding.py`：
+
+- 棋位 `1..50` 转 10x10 坐标并归一化。
+- `MAX_PATH_POINTS=10`
+- `MAX_CAPTURES=9`
+- `MOVE_FEATURE_DIM=45`
+- 编码含起点、终点、路径长度、吃子数、是否吃子、padding 后的 path/captures 坐标。
+
+`trainer/model.py`：
+
+- 模型：`CandidateMoveNet`
+- 配置：`trainer/config/model.yaml`
+- 输入：
+
+```text
+observation   [B, 6, 10, 10]
+move_features [B, M, 45]
+move_mask     [B, M]
+```
+
+- 输出：
+
+```text
+policy_logits [B, M]
+value         [B]
+```
+
+结构：
+
+```text
+board_encoder: CNN -> 256 维局面特征
+move_encoder:  MLP(45 -> 128)
+score_head:    MLP(256+128 -> 1)
+value_head:    MLP(256 -> 1) + Tanh
+```
+
+结构示意图：`trainer/assets/candidate_move_net.svg`。技术说明：`trainer/README-network.md`。
+
+## 监督训练
+
+`trainer/train_supervised.py` 用 selfplay JSONL 训练 `CandidateMoveNet`。
+
+损失：
+
+```text
+policy_loss = CrossEntropy(policy_logits, policy_target_index)
+value_loss  = MSE(value, value_target)
+loss        = policy_loss + value_loss_weight * value_loss
+```
+
+配置：`trainer/config/supervised.yaml`。常用续训命令：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/train_supervised.py data \
+  --resume trainer/checkpoints/candidate_move_net_latest.pt \
+  --checkpoint-dir trainer/checkpoints \
+  --device cpu
+```
+
+启动阶段会立即打印配置读取、数据加载、划分、DataLoader、模型初始化和 checkpoint 加载进度。
+
+Checkpoint 保存策略：
+
+```text
+candidate_move_net_latest.pt          每个 epoch 覆盖，便于续训
+candidate_move_net_best.pt            验证集 loss 最佳时覆盖
+candidate_move_net_epoch_<final>.pt   本次训练结束时保存最终 epoch
+```
+
+默认不保存所有中间 epoch；需要时加 `--save-every-epoch`。
+
+训练还会记录：
+
+```text
+trainer/checkpoints/training_time.json
+trainer/checkpoints/training_log_<experiment_key>.csv
+```
+
+CSV 是逐行追加，不读入历史 CSV；累计训练时间可跨同参数/同数据继续累加。
+
+数据源权重：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/train_supervised.py \
+  --source data/alphabeta_selfplay.jsonl:1.0:1.0:alphabeta \
+  --source data/value_selfplay.jsonl:0.0:1.0:value_selfplay \
+  --resume trainer/checkpoints/candidate_move_net_latest.pt \
+  --checkpoint-dir trainer/checkpoints \
+  --device cpu
+```
+
+也可用 `--source-config trainer/config/data_sources.yaml`。推荐当前策略：AlphaBeta 数据 `policy=1,value=1`；动作质量没有保证的自博弈/结果数据先用 `policy=0,value=1`，只训练 value。
+
+## 当前模型表现
+
+最新 `candidate_move_net_best.pt` 的阶段性 arena 结果：
+
+```text
+vs random:
+  supervised 执黑 96/100
+  supervised 执白 88/100
+
+vs material:
+  supervised 执黑 91/100
+  supervised 执白 91/100
+
+vs alphabeta:
+  supervised 执黑 6/20，alphabeta 13/20，max_plies 1
+  supervised 执白 2/20，alphabeta 18/20
+```
+
+当前棋力层级：
+
+```text
+alphabeta > supervised > material > random
+```
+
+监督学习已经跑通且有效。继续堆 epoch 容易过拟合，优先使用 `best.pt` 做评测。后续不做模型辅助 AlphaBeta，也不保留简单 supervised 探索自博弈作为主线，准备转向更正式的自博弈改进/强化学习路线。
 
 ## 测试状态
 
-常用命令：
+常用测试：
 
 ```bash
 make test
-make random-test
 make interface-test
 make trainer-test
-build/random_play 10000 300 2000 1
+make random-test
 ```
 
-测试覆盖棋盘编号、初始化、复制、终局、普通子移动/吃子/连跳、王移动/吃子/连跳、最多吃子、屏障、升王、严格动作校验、非法参数与随机对局。训练侧测试覆盖 observation/action mask、环境 clone、基础 agent、YAML 配置读取、Material 一步评估、AlphaBeta 深度搜索、增强评估的推进/中心/边线特征、SupervisedAgent checkpoint 加载与合法出招、arena 冒烟运行、supervised arena 冒烟运行、selfplay YAML 配置读取、命令行覆盖、JSONL 写出、追加写入、自动避让文件名和值目标计算、inspect_dataset 的合法/非法数据检查、move_encoding 的坐标/动作编码、dataset 的目录读取/样本转换/候选动作 padding/batch 组装，模型配置读取、配置校验、前向形状、mask 和 dataset batch 兼容性，以及监督训练的 checkpoint 保存策略、best/latest 文件、累计训练时间记录和 CSV 续写。
+当前覆盖：
 
-随机测试曾发现并修复一个重要边界：王连跳可以合法回到出发格，执行器不能因起点等于终点而拒绝该动作。
+- C 引擎：棋盘编号、初始化、复制、终局、普通子/王移动吃子连跳、最多吃子、屏障、升王、严格动作校验、随机对局。
+- Python 接口：reset、observation、legal moves、step、clone 等。
+- Trainer：环境、agent、arena、selfplay YAML/追加/自动命名、数据检查、数据读取、动作编码、模型前向、监督训练 checkpoint/CSV/累计时间、数据源 policy/value 权重。
 
-## 临时调试工具
+历史重要修复：王连跳可以合法回到出发格，执行器不能因起点等于终点而拒绝。
 
-`board_viewer` 可查看编号、初始局面、固定测试场景、执行场景首个动作、批量场景，以及进入简易命令行对局器。它只是 C 端临时调试工具，不是正式 GUI。
-
-常用命令：
-
-```bash
-make tools
-build/board_viewer --ids
-build/board_viewer --scenarios
-build/board_viewer --scenario king-multi
-build/board_viewer --play initial
-```
-
-Python GUI：
+## 常用命令
 
 ```bash
 make interface
-PYTHONPATH=interface python3 gui/simple_gui.py
+PYTHONPATH=interface:trainer python3 gui/simple_gui.py
+
+PYTHONPATH=interface:trainer python3 trainer/selfplay.py
+
+PYTHONPATH=interface:trainer python3 trainer/inspect_dataset.py data
+
+PYTHONPATH=interface:trainer python3 trainer/train_supervised.py data \
+  --resume trainer/checkpoints/candidate_move_net_latest.pt \
+  --checkpoint-dir trainer/checkpoints \
+  --device cpu
+
+PYTHONPATH=interface:trainer python3 trainer/arena.py \
+  --black supervised \
+  --white material \
+  --black-checkpoint trainer/checkpoints/candidate_move_net_best.pt \
+  --games 100 \
+  --device cpu
 ```
 
 ## 未完成事项
 
-- 更大规模的复杂残局回归测试。
-- AlphaBeta 的走法排序、缓存、限时搜索，以及机动性/威胁等更昂贵评估特征。
-- 模型评测脚本、神经网络 agent、训练曲线导出。
+- 强化学习或自博弈改进闭环。
+- 更大数据时的 streaming dataset 或 shard 采样策略。
+- 训练曲线可视化/导出。
+- 更系统的多模型评测脚本，等后续方法更多时再统一设计。
+- 更大规模复杂残局回归测试。
 - 和棋规则暂按当前讨论结果忽略。
 
 ## 建议下一步
 
-可以实现更系统的模型评测脚本，批量加载多个 checkpoint，与 `random/material/alphabeta` 做固定种子对战并输出 CSV 报告。
+设计更正式的自博弈改进/强化学习闭环。当前监督模型自博弈动作不再作为高质量老师动作直接模仿；AlphaBeta 数据仍是主要 policy 监督来源，数据源权重机制保留给后续 value/RL 数据混合使用。

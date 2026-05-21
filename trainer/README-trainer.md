@@ -20,6 +20,7 @@ trainer/
   config/selfplay.yaml
   config/model.yaml
   config/supervised.yaml
+  config/data_sources.yaml
   tests/
     test_env.py
     test_agents.py
@@ -48,6 +49,7 @@ trainer/
 - `config/selfplay.yaml`：selfplay 数据生成参数。
 - `config/model.yaml`：`CandidateMoveNet` 的网络结构参数。
 - `config/supervised.yaml`：监督学习训练参数。
+- `config/data_sources.yaml`：监督训练数据源权重配置示例。
 - `tests/`：训练环境、agent、arena、selfplay、数据检查器、动作编码器、数据读取器、模型和监督训练测试。
 - `README-trainer.md`：本文档。
 - `README-network.md`：神经网络组件与动作编码设计记录。
@@ -710,6 +712,72 @@ PYTHONPATH=interface:trainer python3 trainer/train_supervised.py data \
 
 如果有 CUDA GPU，可以把 `--device cpu` 改成 `--device cuda`；如果不传 `--device`，脚本会自动优先使用 CUDA，否则使用 CPU。
 
+旧命令仍然可用，等价于所有输入数据：
+
+```text
+policy_weight = 1.0
+value_weight = 1.0
+```
+
+如果要让不同数据源承担不同作用，可以使用 `--source`：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/train_supervised.py \
+  --source data/alphabeta_selfplay.jsonl:1.0:1.0:alphabeta \
+  --source data/value_selfplay.jsonl:0.0:1.0:value_selfplay \
+  --resume trainer/checkpoints/candidate_move_net_latest.pt \
+  --checkpoint-dir trainer/checkpoints \
+  --device cpu
+```
+
+`--source` 格式为：
+
+```text
+PATH:POLICY_WEIGHT:VALUE_WEIGHT[:NAME]
+```
+
+| 字段 | 含义 |
+| --- | --- |
+| `PATH` | JSONL 文件或目录。目录会递归读取其中所有 `*.jsonl`。 |
+| `POLICY_WEIGHT` | 该来源样本对 policy loss 的权重。设为 `0` 表示不模仿这些动作。 |
+| `VALUE_WEIGHT` | 该来源样本对 value loss 的权重。 |
+| `NAME` | 可选名称，只用于记录和辨认数据源。 |
+
+也可以使用配置文件：
+
+```text
+trainer/config/data_sources.yaml
+```
+
+格式示例：
+
+```yaml
+source_1_path: data/alphabeta_selfplay.jsonl
+source_1_policy_weight: 1.0
+source_1_value_weight: 1.0
+source_1_name: alphabeta
+
+source_2_path: data/value_selfplay.jsonl
+source_2_policy_weight: 0.0
+source_2_value_weight: 1.0
+source_2_name: value_selfplay
+```
+
+运行：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/train_supervised.py \
+  --source-config trainer/config/data_sources.yaml \
+  --resume trainer/checkpoints/candidate_move_net_latest.pt \
+  --checkpoint-dir trainer/checkpoints \
+  --device cpu
+```
+
+当前建议：
+
+- AlphaBeta 数据：`policy_weight=1.0`，`value_weight=1.0`。
+- 自博弈或其他结果数据：如果动作质量没有保证，先设 `policy_weight=0.0`，`value_weight=1.0`，只用于 value 学习。
+
 训练时会打印每个 epoch 的关键指标：
 
 启动阶段也会打印配置读取、数据集加载、数据划分、DataLoader 构建、模型初始化和 checkpoint 加载进度，避免大数据集或 resume 时出现长时间空白。
@@ -799,7 +867,8 @@ csv_log_interval_epochs: 5
 
 建议后续依次实现：
 
-1. 将训练好的神经网络接入 agent 或 GUI。
-2. 增加模型评测脚本，对比 random/material/alphabeta。
-3. 更大规模数据生成与训练。
-4. 搜索与强化学习流程。
+1. 设计自博弈/强化学习改进闭环，不再简单模仿监督模型自己的动作。
+2. 继续把 AlphaBeta 数据作为主要 policy 监督来源。
+3. 使用数据源权重机制实验不同来源的 policy/value 贡献。
+4. 数据规模继续增大后，实现 shard 采样或 streaming dataset。
+5. 等后续方法更多时，再统一实现模型评测脚本。

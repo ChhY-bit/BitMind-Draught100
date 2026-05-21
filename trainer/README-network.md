@@ -328,4 +328,6 @@ value loss:  MSE(value, value_target)
 trainer/train_supervised.py
 ```
 
-训练脚本会保存 PyTorch checkpoint，并记录当前运行耗时和累计训练时间。模型评测与接入 GUI/agent 仍待后续实现。
+训练脚本会保存 PyTorch checkpoint，并记录当前运行耗时和累计训练时间。当前模型已可通过 `SupervisedAgent` 接入 arena、selfplay 和 GUI。
+
+`SupervisedAgent` 当前按 `policy_logits` 贪心选择最高分动作。曾实验过 temperature/top-k/epsilon 探索采样，但没有带来稳定棋力提升，因此当前主线不保留这套探索接口。

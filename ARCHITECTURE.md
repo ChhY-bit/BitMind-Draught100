@@ -23,7 +23,7 @@ BitMind-Draught100
 |
 +-- gui/                             Python GUI
 |   |
-|   +-- simple_gui.py                 棋盘显示、点击走子、日志、棋谱、随机AI
+|   +-- simple_gui.py                 棋盘显示、点击走子、日志、棋谱、随机AI、监督模型AI
 |   +-- README-gui.md                 GUI 使用说明
 |
 +-- trainer/                         训练、搜索、数据生成
@@ -150,7 +150,7 @@ make tools
 生成数据：
 
 ```bash
-PYTHONPATH=interface:trainer python3 trainer/selfplay.py --black alphabeta --white alphabeta --games 100 --output data/selfplay.jsonl
+PYTHONPATH=interface:trainer python3 trainer/selfplay.py
 ```
 
 检查数据：
@@ -163,7 +163,7 @@ PYTHONPATH=interface:trainer python3 trainer/inspect_dataset.py data/
 
 ```bash
 PYTHONPATH=interface:trainer python3 trainer/train_supervised.py data \
-  --config trainer/config/supervised.yaml \
-  --model-config trainer/config/model.yaml \
-  --checkpoint-dir trainer/checkpoints
+  --resume trainer/checkpoints/candidate_move_net_latest.pt \
+  --checkpoint-dir trainer/checkpoints \
+  --device cpu
 ```

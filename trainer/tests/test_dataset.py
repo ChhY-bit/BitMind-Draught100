@@ -3,6 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from dataset import (
+    DataSource,
     DraughtsJsonlDataset,
     batched,
     collate_batch,
@@ -39,6 +40,35 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(len(item["move_features"][0]), MOVE_FEATURE_DIM)
         self.assertIsInstance(item["policy_target_index"], int)
         self.assertIn("game_id", item["metadata"])
+
+    def test_dataset_applies_source_weights(self):
+        with TemporaryDirectory() as tmp_dir:
+            output = Path(tmp_dir) / "selfplay.jsonl"
+            generate_dataset(
+                black_name="random",
+                white_name="random",
+                games=1,
+                max_plies=4,
+                output_path=str(output),
+                log_interval=1,
+                seed=1,
+            )
+
+            dataset = DraughtsJsonlDataset.from_sources(
+                [
+                    DataSource(
+                        path=str(output),
+                        policy_weight=0.25,
+                        value_weight=1.5,
+                        name="weighted",
+                    )
+                ]
+            )
+            item = dataset[0]
+
+        self.assertEqual(item["policy_weight"], 0.25)
+        self.assertEqual(item["value_weight"], 1.5)
+        self.assertEqual(item["metadata"]["source_name"], "weighted")
 
     def test_resolve_directory_and_iter_samples(self):
         with TemporaryDirectory() as tmp_dir:
@@ -91,6 +121,8 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(batch["move_mask"], [[1, 0], [1, 1]])
         self.assertEqual(batch["policy_target_index"], [0, 1])
         self.assertEqual(batch["value_target"], [1, -1])
+        self.assertEqual(batch["policy_weight"], [1.0, 1.0])
+        self.assertEqual(batch["value_weight"], [1.0, 1.0])
         self.assertEqual(len(batches), 2)
 
     def test_dataset_validation_rejects_bad_mask(self):

@@ -7,7 +7,14 @@ from tempfile import TemporaryDirectory
 import torch
 
 from selfplay import generate_dataset
-from train_supervised import load_supervised_config, main, split_indices
+from train_supervised import (
+    compute_loss,
+    load_data_source_config,
+    load_supervised_config,
+    main,
+    parse_data_source_arg,
+    split_indices,
+)
 
 
 class TrainSupervisedTests(unittest.TestCase):
@@ -36,6 +43,53 @@ class TrainSupervisedTests(unittest.TestCase):
         self.assertGreater(len(train_indices), 0)
         self.assertGreater(len(val_indices), 0)
         self.assertEqual(sorted(train_indices + val_indices), [0, 1, 2])
+
+    def test_parse_weighted_data_sources(self):
+        source = parse_data_source_arg("data/ab.jsonl:1.0:0.5:ab")
+
+        self.assertEqual(source.path, "data/ab.jsonl")
+        self.assertEqual(source.policy_weight, 1.0)
+        self.assertEqual(source.value_weight, 0.5)
+        self.assertEqual(source.name, "ab")
+
+    def test_load_data_source_config(self):
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "data_sources.yaml"
+            path.write_text(
+                "source_1_path: data/ab.jsonl\n"
+                "source_1_policy_weight: 1.0\n"
+                "source_1_value_weight: 1.0\n"
+                "source_1_name: ab\n"
+                "source_2_path: data/sl.jsonl\n"
+                "source_2_policy_weight: 0.2\n"
+                "source_2_value_weight: 1.0\n"
+                "source_2_name: sl\n",
+                encoding="utf-8",
+            )
+
+            sources = load_data_source_config(path)
+
+        self.assertEqual(len(sources), 2)
+        self.assertEqual(sources[0].name, "ab")
+        self.assertEqual(sources[1].policy_weight, 0.2)
+
+    def test_compute_loss_uses_policy_and_value_weights(self):
+        output = {
+            "policy_logits": torch.tensor([[2.0, 0.0], [0.0, 2.0]], requires_grad=True),
+            "value": torch.tensor([0.0, 0.0], requires_grad=True),
+        }
+        batch = {
+            "policy_target_index": torch.tensor([0, 0]),
+            "value_target": torch.tensor([1.0, -1.0]),
+            "policy_weight": torch.tensor([1.0, 0.0]),
+            "value_weight": torch.tensor([0.0, 1.0]),
+        }
+
+        loss, policy_loss, value_loss = compute_loss(output, batch, value_loss_weight=0.5)
+
+        self.assertLess(policy_loss.item(), 0.2)
+        self.assertAlmostEqual(value_loss.item(), 1.0, places=5)
+        self.assertAlmostEqual(loss.item(), policy_loss.item() + 0.5, places=5)
 
     def test_supervised_training_writes_checkpoints_and_time_log(self):
         with TemporaryDirectory() as tmp_dir:
