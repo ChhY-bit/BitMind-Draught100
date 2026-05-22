@@ -130,17 +130,22 @@ class BoardView(tk.Canvas):
             highlightthickness=0,
         )
         self._on_square_click = on_square_click
+        self.rotated = False
         self.bind("<Button-1>", self._handle_click)
 
     def _handle_click(self, event) -> None:
-        row = event.y // CELL_SIZE
-        col = event.x // CELL_SIZE
-        if row < 0 or row >= BOARD_SIZE or col < 0 or col >= BOARD_SIZE:
+        view_row = event.y // CELL_SIZE
+        view_col = event.x // CELL_SIZE
+        if view_row < 0 or view_row >= BOARD_SIZE or view_col < 0 or view_col >= BOARD_SIZE:
             return
+        row, col = self._board_coord_from_view(view_row, view_col)
         square_id = coord_to_square(row, col)
         if square_id is None:
             return
         self._on_square_click(square_id)
+
+    def toggle_rotation(self) -> None:
+        self.rotated = not self.rotated
 
     def draw(
         self,
@@ -155,8 +160,9 @@ class BoardView(tk.Canvas):
 
         for row in range(BOARD_SIZE):
             for col in range(BOARD_SIZE):
-                x0 = col * CELL_SIZE
-                y0 = row * CELL_SIZE
+                view_row, view_col = self._view_coord_from_board(row, col)
+                x0 = view_col * CELL_SIZE
+                y0 = view_row * CELL_SIZE
                 x1 = x0 + CELL_SIZE
                 y1 = y0 + CELL_SIZE
                 playable = coord_to_square(row, col) is not None
@@ -208,8 +214,9 @@ class BoardView(tk.Canvas):
 
     def _draw_piece(self, square_id: int, piece: int) -> None:
         row, col = square_to_coord(square_id)
-        x0 = col * CELL_SIZE
-        y0 = row * CELL_SIZE
+        view_row, view_col = self._view_coord_from_board(row, col)
+        x0 = view_col * CELL_SIZE
+        y0 = view_row * CELL_SIZE
         pad = 10
         fill = "#111820" if piece in (BLACK_MAN, BLACK_KING) else "#f8f4ea"
         outline = "#f8f4ea" if piece in (BLACK_MAN, BLACK_KING) else "#111820"
@@ -233,6 +240,14 @@ class BoardView(tk.Canvas):
                 fill=text_fill,
                 font=("TkDefaultFont", 18, "bold"),
             )
+
+    def _view_coord_from_board(self, row: int, col: int) -> tuple[int, int]:
+        if not self.rotated:
+            return row, col
+        return BOARD_SIZE - 1 - row, BOARD_SIZE - 1 - col
+
+    def _board_coord_from_view(self, row: int, col: int) -> tuple[int, int]:
+        return self._view_coord_from_board(row, col)
 
 
 class GameController:
@@ -551,6 +566,7 @@ class DraughtsApp(tk.Tk):
             "last": tk.StringVar(value="-"),
         }
         self.pause_button: Optional[ttk.Button] = None
+        self.rotate_button: Optional[ttk.Button] = None
 
         self._build_layout()
         self.controller = GameController(self)
@@ -599,6 +615,8 @@ class DraughtsApp(tk.Tk):
         ttk.Button(toolbar, text="新建对局", command=self._on_new_game).pack(side="left")
         ttk.Button(toolbar, text="重开本局", command=self._on_restart).pack(side="left", padx=(8, 0))
         ttk.Button(toolbar, text="悔棋", command=self._on_undo).pack(side="left", padx=(8, 0))
+        self.rotate_button = ttk.Button(toolbar, text="旋转棋盘", command=self._on_rotate_board)
+        self.rotate_button.pack(side="left", padx=(8, 0))
 
         ai_toolbar = ttk.Frame(sidebar)
         ai_toolbar.grid(row=2, column=0, sticky="ew", pady=(0, 10))
@@ -833,6 +851,11 @@ class DraughtsApp(tk.Tk):
 
     def _on_undo(self) -> None:
         self.controller.undo_last_move()
+
+    def _on_rotate_board(self) -> None:
+        self.board.toggle_rotation()
+        self.controller.refresh()
+        self.log("棋盘视角已旋转 180 度。", "info")
 
     def _on_toggle_pause(self) -> None:
         self.controller.toggle_pause()

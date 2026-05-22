@@ -1,0 +1,44 @@
+# 自博弈强化学习训练参数。
+# 该训练器读取 trainer/rl_selfplay.py 生成的探索样本，并从 --resume checkpoint 更新 candidate。
+
+# 本次训练轮数；建议先短训练再用 arena 评测 candidate。
+epochs: 2
+
+# 每个 batch 的样本数；CPU 内存紧张时可调小。
+batch_size: 64
+
+# Adam 学习率。RL 更新噪声高于监督学习，默认比监督训练保守。
+learning_rate: 0.0001
+
+# Actor 策略损失在总损失中的权重。
+policy_loss_weight: 1.0
+
+# Critic 价值损失在总损失中的权重。
+value_loss_weight: 0.5
+
+# 熵奖励权重。总损失会减去 entropy_weight * entropy；0 表示暂不额外鼓励分布发散。
+entropy_weight: 0.0
+
+# Advantage 裁剪绝对值；0 表示不裁剪。
+advantage_clip: 2.0
+
+# PPO 策略概率比值裁剪宽度；0.2 表示 ratio 主要限制在 [0.8, 1.2]。
+ppo_clip_epsilon: 0.2
+
+# 验证集比例；验证集只评估当前 RL loss，不参与参数更新。
+validation_split: 0.1
+
+# 随机种子；影响训练/验证划分、shuffle 和 DataLoader 顺序。
+seed: 1
+
+# 是否打乱训练样本；1 表示打乱。
+shuffle: 1
+
+# 每隔多少 batch 打印一次训练日志。
+log_interval: 20
+
+# 每隔多少 epoch 向 CSV 写入一行；最后一个 epoch 一定写入。
+csv_log_interval_epochs: 1
+
+# DataLoader 子进程数；当前默认 0 便于调试和兼容。
+num_workers: 0

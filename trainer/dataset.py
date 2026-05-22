@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Sequence
 
 from move_encoding import MOVE_FEATURE_DIM, encode_legal_moves, selected_move_index
+from env import encode_observation
 
 
 OBSERVATION_SHAPE = (6, 10, 10)
@@ -120,13 +121,17 @@ def training_item_from_sample(
 ) -> Dict[str, object]:
     legal_moves = sample["legal_moves"]
     selected_move = sample["selected_move"]
+    side_to_move = int(sample["side_to_move"])
     return {
-        "observation": sample["observation"],
+        "observation": observation_from_sample(sample),
         "action_mask": sample["action_mask"],
         "policy_target": int(sample["selected_action_id"]),
-        "move_features": encode_legal_moves(legal_moves),
+        "move_features": encode_legal_moves(legal_moves, side_to_move=side_to_move),
         "policy_target_index": selected_move_index(legal_moves, selected_move),
         "value_target": int(sample["value_target"]),
+        "selected_policy_prob": float(sample.get("selected_policy_prob", 1.0)),
+        "behavior_temperature": float(sample.get("temperature", 1.0)),
+        "behavior_value": float(sample.get("predicted_value", 0.0)),
         "policy_weight": float(policy_weight),
         "value_weight": float(value_weight),
         "metadata": {
@@ -140,6 +145,17 @@ def training_item_from_sample(
             "source_path": source_path,
         },
     }
+
+
+def observation_from_sample(sample: Dict[str, object]) -> object:
+    if "raw_squares" in sample and "side_to_move" in sample:
+        return encode_observation(
+            {
+                "squares": sample["raw_squares"],
+                "side_to_move": int(sample["side_to_move"]),
+            }
+        )
+    return sample["observation"]
 
 
 def validate_data_source(source: DataSource) -> None:
@@ -205,6 +221,9 @@ def collate_batch(items: Sequence[Dict[str, object]]) -> Dict[str, object]:
         ],
         "policy_target_index": [item["policy_target_index"] for item in items],
         "value_target": [item["value_target"] for item in items],
+        "selected_policy_prob": [item.get("selected_policy_prob", 1.0) for item in items],
+        "behavior_temperature": [item.get("behavior_temperature", 1.0) for item in items],
+        "behavior_value": [item.get("behavior_value", 0.0) for item in items],
         "policy_weight": [item.get("policy_weight", 1.0) for item in items],
         "value_weight": [item.get("value_weight", 1.0) for item in items],
         "metadata": [item["metadata"] for item in items],
@@ -231,6 +250,9 @@ def to_torch_batch(batch: Dict[str, object]) -> Dict[str, object]:
         "move_mask": torch.tensor(batch["move_mask"], dtype=torch.float32),
         "policy_target_index": torch.tensor(batch["policy_target_index"], dtype=torch.long),
         "value_target": torch.tensor(batch["value_target"], dtype=torch.float32),
+        "selected_policy_prob": torch.tensor(batch["selected_policy_prob"], dtype=torch.float32),
+        "behavior_temperature": torch.tensor(batch["behavior_temperature"], dtype=torch.float32),
+        "behavior_value": torch.tensor(batch["behavior_value"], dtype=torch.float32),
         "policy_weight": torch.tensor(batch["policy_weight"], dtype=torch.float32),
         "value_weight": torch.tensor(batch["value_weight"], dtype=torch.float32),
         "metadata": batch["metadata"],

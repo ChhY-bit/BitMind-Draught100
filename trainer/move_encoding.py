@@ -10,7 +10,11 @@ MAX_CAPTURES = 9
 MOVE_FEATURE_DIM = 4 + 3 + MAX_PATH_POINTS * 2 + MAX_CAPTURES * 2
 
 
-def encode_move(move: Dict[str, object]) -> List[float]:
+BLACK_SIDE = 0
+WHITE_SIDE = 1
+
+
+def encode_move(move: Dict[str, object], side_to_move: int = BLACK_SIDE) -> List[float]:
     path = [int(square) for square in move["path"]]
     captures = [int(square) for square in move.get("captures", [])]
     if not path:
@@ -19,6 +23,9 @@ def encode_move(move: Dict[str, object]) -> List[float]:
         raise ValueError(f"move path length {len(path)} exceeds {MAX_PATH_POINTS}")
     if len(captures) > MAX_CAPTURES:
         raise ValueError(f"capture count {len(captures)} exceeds {MAX_CAPTURES}")
+
+    path = [perspective_square_id(square, side_to_move) for square in path]
+    captures = [perspective_square_id(square, side_to_move) for square in captures]
 
     start_row, start_col = normalized_square_coord(path[0])
     end_row, end_col = normalized_square_coord(path[-1])
@@ -39,8 +46,11 @@ def encode_move(move: Dict[str, object]) -> List[float]:
     return features
 
 
-def encode_legal_moves(moves: Sequence[Dict[str, object]]) -> List[List[float]]:
-    return [encode_move(move) for move in moves]
+def encode_legal_moves(
+    moves: Sequence[Dict[str, object]],
+    side_to_move: int = BLACK_SIDE,
+) -> List[List[float]]:
+    return [encode_move(move, side_to_move=side_to_move) for move in moves]
 
 
 def selected_move_index(
@@ -86,3 +96,13 @@ def square_to_coord(square_id: int) -> tuple[int, int]:
     offset = zero_based % 5
     col = offset * 2 + (1 if row % 2 == 0 else 0)
     return row, col
+
+
+def perspective_square_id(square_id: int, side_to_move: int) -> int:
+    if square_id < 1 or square_id > SQUARE_COUNT:
+        raise ValueError(f"square_id must be in 1..50: {square_id}")
+    if side_to_move == BLACK_SIDE:
+        return square_id
+    if side_to_move == WHITE_SIDE:
+        return SQUARE_COUNT + 1 - square_id
+    raise ValueError(f"invalid side_to_move: {side_to_move}")

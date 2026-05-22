@@ -121,10 +121,11 @@ def encode_observation(observation: Dict[str, object]) -> Observation:
     encoded = empty_observation()
 
     for square_id in range(1, SQUARE_COUNT + 1):
-        row, col = square_to_coord(square_id)
+        perspective_square = perspective_square_id(square_id, side_to_move)
+        row, col = square_to_coord(perspective_square)
         piece = int(squares[square_id - 1])
         encoded[4][row][col] = 1
-        encoded[5][row][col] = side_to_move
+        encoded[5][row][col] = 0
 
         if piece == EMPTY:
             continue
@@ -173,3 +174,13 @@ def square_to_coord(square_id: int) -> Tuple[int, int]:
     offset = zero_based % 5
     col = offset * 2 + (1 if row % 2 == 0 else 0)
     return row, col
+
+
+def perspective_square_id(square_id: int, side_to_move: int) -> int:
+    if square_id < 1 or square_id > SQUARE_COUNT:
+        raise ValueError(f"square_id must be in 1..50: {square_id}")
+    if side_to_move == BLACK_SIDE:
+        return square_id
+    if side_to_move == WHITE_SIDE:
+        return SQUARE_COUNT + 1 - square_id
+    raise ValueError(f"invalid side_to_move: {side_to_move}")

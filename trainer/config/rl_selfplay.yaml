@@ -1,0 +1,33 @@
+# RL 自博弈数据生成参数。
+# 该脚本只用于训练数据探索采样，不改变 arena / GUI 中 SupervisedAgent 的贪心决策。
+
+# 当前 policy/value checkpoint；必须在这里或命令行 --checkpoint 指定。
+checkpoint: none
+
+# 生成局数。
+games: 100
+
+# 每局最大半回合数；达到上限仍未结束时，该局 value_target 记为 0。
+max_plies: 500
+
+# 输出 JSONL 文件路径。
+output: data/rl_selfplay.jsonl
+
+# 每隔多少局打印一次进度。
+log_interval: 20
+
+# 探索采样与对局生成使用的随机种子。
+seed: 1
+
+# temperature softmax 采样温度。越小越接近贪心，越大越分散；必须大于 0。
+temperature: 0.8
+
+# 推理设备；none 表示自动选择，CPU 可写 cpu，GPU 可写 cuda。
+device: none
+
+# 是否追加写入 output；1 表示追加并延续 game_id。
+append: 0
+
+# 如果 output 已存在，是否自动生成 _001/_002 新文件名避免覆盖。
+# append 为 1 时这里必须为 0。
+auto_output_name: 1

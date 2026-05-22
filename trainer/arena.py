@@ -1,17 +1,37 @@
 from __future__ import annotations
 
 import argparse
+import random
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Optional
 
 from agents import Agent, available_agents, make_agent
 from env import StandardDraughtsEnv
+from selfplay import load_scalar_yaml
 
 
 BLACK_WIN = 1
 WHITE_WIN = 2
 DRAW = 3
+DEFAULT_ARENA_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "arena.yaml"
+
+
+@dataclass
+class ArenaConfig:
+    black: str = "random"
+    white: str = "greedy"
+    games: int = 100
+    max_plies: int = 300
+    log_interval: int = 20
+    seed: int = 1
+    opening_random_plies: int = 0
+    material_config: Optional[str] = None
+    alphabeta_config: Optional[str] = None
+    black_checkpoint: Optional[str] = None
+    white_checkpoint: Optional[str] = None
+    device: Optional[str] = None
 
 
 @dataclass
@@ -46,11 +66,28 @@ def play_game(
     black_agent: Agent,
     white_agent: Agent,
     max_plies: int,
+    opening_random_plies: int = 0,
+    opening_rng: Optional[random.Random] = None,
 ) -> tuple[int, int, bool]:
     env = StandardDraughtsEnv()
     env.reset()
 
-    for ply in range(max_plies):
+    if opening_random_plies < 0:
+        raise ValueError("opening_random_plies must be non-negative")
+    if opening_random_plies > 0 and opening_rng is None:
+        raise ValueError("opening_rng is required when opening_random_plies is positive")
+
+    plies, opening_finished = apply_random_opening(
+        env,
+        opening_random_plies,
+        max_plies,
+        opening_rng,
+    )
+    if opening_finished:
+        raw = env.raw_observation()
+        return int(raw["game_result"]), plies, plies >= max_plies
+
+    for ply in range(plies, max_plies):
         raw = env.raw_observation()
         if raw["game_result_name"] != "ongoing":
             return int(raw["game_result"]), ply, False
@@ -67,6 +104,28 @@ def play_game(
     return int(raw["game_result"]), max_plies, True
 
 
+def apply_random_opening(
+    env: StandardDraughtsEnv,
+    opening_random_plies: int,
+    max_plies: int,
+    rng: Optional[random.Random],
+) -> tuple[int, bool]:
+    """Advance one legal random opening before evaluated agents start moving."""
+    plies = 0
+    while plies < opening_random_plies and plies < max_plies:
+        raw = env.raw_observation()
+        if raw["game_result_name"] != "ongoing":
+            return plies, True
+        legal_actions = env.legal_actions()
+        if not legal_actions:
+            return plies, True
+        if rng is None:
+            raise ValueError("opening rng is required for random opening moves")
+        env.step(rng.choice(legal_actions).action_id)
+        plies += 1
+    return plies, plies >= max_plies
+
+
 def run_arena(
     black_name: str,
     white_name: str,
@@ -79,7 +138,17 @@ def run_arena(
     black_checkpoint_path: Optional[str] = None,
     white_checkpoint_path: Optional[str] = None,
     device: Optional[str] = None,
+    opening_random_plies: int = 0,
 ) -> ArenaStats:
+    if games <= 0:
+        raise ValueError("games must be positive")
+    if max_plies <= 0:
+        raise ValueError("max_plies must be positive")
+    if log_interval <= 0:
+        raise ValueError("log_interval must be positive")
+    if opening_random_plies < 0:
+        raise ValueError("opening_random_plies must be non-negative")
+
     black_agent = make_agent(
         black_name,
         seed=seed,
@@ -99,10 +168,12 @@ def run_arena(
     )
     stats = ArenaStats()
     start = time.perf_counter()
+    opening_rng = random.Random(None if seed is None else seed + 2)
 
     print(
         f"arena: black={black_agent.name} white={white_agent.name} "
         f"games={games} max_plies={max_plies} seed={seed} "
+        f"opening_random_plies={opening_random_plies} "
         f"material_config={material_config_path or 'default'} "
         f"alphabeta_config={alphabeta_config_path or 'default'} "
         f"black_checkpoint={black_checkpoint_path or 'none'} "
@@ -110,7 +181,13 @@ def run_arena(
     )
 
     for game_index in range(1, games + 1):
-        result, plies, maxed = play_game(black_agent, white_agent, max_plies)
+        result, plies, maxed = play_game(
+            black_agent,
+            white_agent,
+            max_plies,
+            opening_random_plies=opening_random_plies,
+            opening_rng=opening_rng,
+        )
         stats.record(result, plies, maxed)
 
         if game_index % log_interval == 0 or game_index == games:
@@ -127,12 +204,19 @@ def run_arena(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run baseline draughts agents against each other.")
-    parser.add_argument("--black", default="random", choices=available_agents())
-    parser.add_argument("--white", default="greedy", choices=available_agents())
-    parser.add_argument("--games", type=int, default=100)
-    parser.add_argument("--max-plies", type=int, default=300)
-    parser.add_argument("--log-interval", type=int, default=20)
-    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--config", default=str(DEFAULT_ARENA_CONFIG_PATH))
+    parser.add_argument("--black", default=None, choices=available_agents())
+    parser.add_argument("--white", default=None, choices=available_agents())
+    parser.add_argument("--games", type=int, default=None)
+    parser.add_argument("--max-plies", type=int, default=None)
+    parser.add_argument("--log-interval", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument(
+        "--opening-random-plies",
+        type=int,
+        default=None,
+        help="Random legal half-moves to play before evaluated agents start.",
+    )
     parser.add_argument(
         "--material-config",
         default=None,
@@ -158,7 +242,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Device for SupervisedAgent: cpu, cuda, or cuda:0. Defaults to auto.",
     )
-    args = parser.parse_args()
+    args = merge_arena_args(parser.parse_args())
 
     if args.games <= 0:
         parser.error("--games must be positive")
@@ -166,11 +250,62 @@ def parse_args() -> argparse.Namespace:
         parser.error("--max-plies must be positive")
     if args.log_interval <= 0:
         parser.error("--log-interval must be positive")
+    if args.opening_random_plies < 0:
+        parser.error("--opening-random-plies must be non-negative")
     if args.black == "supervised" and not args.black_checkpoint:
         parser.error("--black supervised requires --black-checkpoint")
     if args.white == "supervised" and not args.white_checkpoint:
         parser.error("--white supervised requires --white-checkpoint")
     return args
+
+
+def merge_arena_args(cli_args: argparse.Namespace) -> argparse.Namespace:
+    config = load_arena_config(cli_args.config)
+    values = asdict(config)
+    for key in (
+        "black",
+        "white",
+        "games",
+        "max_plies",
+        "log_interval",
+        "seed",
+        "opening_random_plies",
+        "material_config",
+        "alphabeta_config",
+        "black_checkpoint",
+        "white_checkpoint",
+        "device",
+    ):
+        value = getattr(cli_args, key)
+        if value is not None:
+            values[key] = value
+    values["config"] = cli_args.config
+    return argparse.Namespace(**values)
+
+
+def load_arena_config(config_path: str | Path) -> ArenaConfig:
+    path = Path(config_path)
+    defaults = asdict(ArenaConfig())
+    values = dict(defaults)
+    values.update(load_scalar_yaml(path, defaults, "arena"))
+    config = ArenaConfig(**values)
+    validate_arena_config(config)
+    return config
+
+
+def validate_arena_config(config: ArenaConfig) -> None:
+    if config.black not in available_agents():
+        raise ValueError(f"unknown black agent in arena config: {config.black}")
+    if config.white not in available_agents():
+        raise ValueError(f"unknown white agent in arena config: {config.white}")
+    if config.games <= 0:
+        raise ValueError("arena games must be positive")
+    if config.max_plies <= 0:
+        raise ValueError("arena max_plies must be positive")
+    if config.log_interval <= 0:
+        raise ValueError("arena log_interval must be positive")
+    if config.opening_random_plies < 0:
+        raise ValueError("arena opening_random_plies must be non-negative")
 
 
 def main() -> None:
@@ -187,6 +322,7 @@ def main() -> None:
         black_checkpoint_path=args.black_checkpoint,
         white_checkpoint_path=args.white_checkpoint,
         device=args.device,
+        opening_random_plies=args.opening_random_plies,
     )
 
 

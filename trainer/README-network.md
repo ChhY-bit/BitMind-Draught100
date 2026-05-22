@@ -59,7 +59,9 @@ score for this candidate move
 | `2` | 对方普通子 |
 | `3` | 对方王 |
 | `4` | 合法棋位 |
-| `5` | 当前行棋方平面 |
+| `5` | 保留平面，当前统一为 `0` |
+
+棋盘输入使用当前行棋方视角归一化：黑方行棋时保持原方向；白方行棋时按 180 度旋转，也就是棋位 `square_id -> 51 - square_id`。这样当前方普通子在网络输入中总是朝同一个方向前进，CNN 不需要分别学习黑方前进和白方前进两套几何模式。
 
 后续 CNN board encoder 会把它转换为 `board_feature`。这些特征通常不是人工指定的物理量，而是在训练过程中学到的抽象局面表示。
 
@@ -84,7 +86,13 @@ trainer/move_encoding.py
 
 ### 坐标转换
 
-棋位编号 `1..50` 先转换为 10x10 棋盘坐标：
+棋位编号 `1..50` 会先按当前行棋方视角处理。黑方保持原编号，白方先做：
+
+```text
+perspective_square = 51 - square_id
+```
+
+然后再转换为 10x10 棋盘坐标：
 
 ```text
 row = (square_id - 1) // 5
@@ -106,6 +114,8 @@ col_norm = col / 9
 6  -> row=1 col=0
 50 -> row=9 col=8
 ```
+
+因此同一类“当前方向前走”的动作，执黑和执白会得到一致的动作方向编码。
 
 ### 固定长度
 
@@ -169,7 +179,7 @@ max capture count = 5
 
 ### Dataset 输出
 
-`trainer/dataset.py` 已接入动作编码器。每个 item 现在包含：
+`trainer/dataset.py` 已接入动作编码器。读取旧 JSONL 时会优先使用 `raw_squares + side_to_move` 动态重建当前方视角 observation，而不是盲目使用文件中已有的旧 `observation` 字段。每个 item 现在包含：
 
 ```text
 observation
@@ -331,3 +341,36 @@ trainer/train_supervised.py
 训练脚本会保存 PyTorch checkpoint，并记录当前运行耗时和累计训练时间。当前模型已可通过 `SupervisedAgent` 接入 arena、selfplay 和 GUI。
 
 `SupervisedAgent` 当前按 `policy_logits` 贪心选择最高分动作。曾实验过 temperature/top-k/epsilon 探索采样，但没有带来稳定棋力提升，因此当前主线不保留这套探索接口。
+
+强化学习自博弈侧改用独立入口：
+
+```text
+trainer/rl_selfplay.py
+```
+
+它直接读取 `CandidateMoveNet` 的 `policy_logits` 与 `value`：
+
+- `policy_logits` 经过 temperature softmax 后给合法候选动作采样，产生探索数据。
+- `value` 作为生成时的局面预测写入样本，供后续策略更新阶段使用。
+- 行为策略概率随样本一起保存，避免后续训练阶段只能看到“选了哪一步”，却不知道当时按什么分布采样。
+
+因此当前边界是：`SupervisedAgent` 负责稳定 greedy 对弈；`rl_selfplay.py` 负责训练期间的探索采样。它们共用同一个网络 checkpoint，但职责不同。
+
+第一版自博弈更新入口：
+
+```text
+trainer/train_selfplay.py
+```
+
+它把 `score_head` 视作 Actor，把 `value_head` 视作 Critic。策略侧不把探索采样动作当老师答案，而按终局结果相对 value 预期的 advantage 调整被选动作概率。当前使用 PPO clipped objective，让 candidate 保持在样本行为策略附近：
+
+```text
+advantage   = value_target - rollout predicted_value
+old_prob    = selected_policy_prob
+new_prob    = 当前模型在行为 temperature 下的 selected_move 概率
+ratio       = new_prob / old_prob
+policy_loss = - min(ratio * advantage, clip(ratio) * advantage)
+value_loss  = MSE(value, value_target)
+```
+
+训练总损失仍由 policy/value 两部分组成；`score_head` 和 `value_head` 各自只收到自己分支上的梯度，共享 `board_encoder` 同时收到两类梯度。训练器还保留可配置 entropy 奖励、advantage 裁剪和 `ppo_clip_epsilon`，但尚未引入 TD/GAE 或自动模型晋升。

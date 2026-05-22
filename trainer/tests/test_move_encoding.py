@@ -1,11 +1,13 @@
 import unittest
 
 from move_encoding import (
+    WHITE_SIDE,
     MAX_CAPTURES,
     MAX_PATH_POINTS,
     MOVE_FEATURE_DIM,
     encode_move,
     selected_move_index,
+    perspective_square_id,
     square_to_coord,
 )
 
@@ -40,6 +42,16 @@ class MoveEncodingTests(unittest.TestCase):
         self.assertEqual(features[4], 3 / MAX_PATH_POINTS)
         self.assertEqual(features[5], 2 / MAX_CAPTURES)
         self.assertEqual(features[6], 1)
+
+    def test_white_move_is_encoded_from_current_side_perspective(self):
+        black_move = {"action_id": 0, "path": [16, 21], "captures": [], "is_capture": False}
+        white_move = {"action_id": 0, "path": [35, 30], "captures": [], "is_capture": False}
+
+        self.assertEqual(encode_move(black_move), encode_move(white_move, side_to_move=WHITE_SIDE))
+
+    def test_perspective_square_id_rotates_white_side(self):
+        self.assertEqual(perspective_square_id(1, WHITE_SIDE), 50)
+        self.assertEqual(perspective_square_id(50, WHITE_SIDE), 1)
 
     def test_selected_move_index_uses_action_path_and_captures(self):
         legal_moves = [

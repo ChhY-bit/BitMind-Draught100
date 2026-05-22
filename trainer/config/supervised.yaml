@@ -1,7 +1,7 @@
 # 监督学习训练参数。
 
 # 训练轮数；1 个 epoch 表示完整遍历一次训练集。
-epochs: 1
+epochs: 5
 
 # 每个 batch 的样本数；数值越大通常越稳定，但占用更多内存。
 batch_size: 64
@@ -17,7 +17,7 @@ value_loss_weight: 0.25
 validation_split: 0.1
 
 # 随机种子；影响训练/验证划分、shuffle 和初始参数。
-seed: 1
+seed: 4
 
 # 是否打乱训练样本；1 表示打乱，0 表示不打乱。
 shuffle: 1

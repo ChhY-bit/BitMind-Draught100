@@ -272,7 +272,7 @@ class SupervisedAgent(Agent):
                 device=self.device_obj,
             )
             move_tensor = torch.tensor(
-                [encode_legal_moves(move_dicts)],
+                [encode_legal_moves(move_dicts, side_to_move=int(observation["side_to_move"]))],
                 dtype=torch.float32,
                 device=self.device_obj,
             )

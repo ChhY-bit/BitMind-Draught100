@@ -32,12 +32,14 @@ BitMind-Draught100
 |   +-- agents.py                     random/greedy/material/alphabeta/supervised
 |   +-- arena.py                      批量 agent 对战评测
 |   +-- selfplay.py                   JSONL 对局数据生成
+|   +-- rl_selfplay.py                训练专用 RL 探索自博弈数据生成
 |   +-- inspect_dataset.py            JSONL 数据检查
 |   +-- dataset.py                    JSONL 数据读取与 batch 组装
 |   +-- move_encoding.py              候选动作向量编码
 |   +-- model.py                      候选动作打分 policy/value 网络
 |   +-- train_supervised.py           监督学习训练入口
-|   +-- config/*.yaml                 agent、模型与训练参数配置
+|   +-- train_selfplay.py             RL self-play candidate 训练入口
+|   +-- config/*.yaml                 arena、agent、模型与训练参数配置
 |   +-- tests/test_*.py               trainer 测试
 |
 +-- data/                            本地生成的数据集，不进入版本控制
@@ -91,7 +93,7 @@ StandardDraughtsEnv
         |                         |
         v                         v
 trainer/agents.py          trainer/arena.py
-agent 决策                 批量评测胜率/耗时
+agent 决策                 批量评测胜率/耗时，可选随机 opening
         |
         v
 trainer/selfplay.py
@@ -116,11 +118,28 @@ trainer/inspect_dataset.py trainer/dataset.py       trainer/move_encoding.py
                                   |
                                   v
                          trainer/checkpoints/*.pt
+
+trainer/checkpoints/*.pt
+        |
+        v
+trainer/rl_selfplay.py
+按 checkpoint policy temperature 采样
+        |
+        v
+data/rl_*.jsonl
+保存行为概率、value 预测和最终结果
+        |
+        v
+trainer/train_selfplay.py
+PPO 风格 clipped policy/value 更新
+        |
+        v
+trainer/checkpoints/candidate_move_net_rl_*.pt
 ```
 
 ## 当前训练样本格式
 
-`selfplay.py` 生成 JSONL，一行表示“一手棋之前”的训练样本。
+`selfplay.py` 与 `rl_selfplay.py` 都生成 JSONL，一行表示“一手棋之前”的训练样本。
 
 ```text
 sample
@@ -136,7 +155,9 @@ sample
 +-- value_target             当前行棋方视角的胜负标签
 ```
 
-当前神经网络路线采用候选动作打分模型：`move_encoding.py` 将每个候选动作编码成固定长度向量，网络对当前局面的每个合法动作分别打分。
+`rl_selfplay.py` 在这些公共字段之外还记录 `policy_probs`、`selected_policy_prob`、`predicted_value` 和 `policy_checkpoint`，用于后续自博弈策略更新阶段辨认生成策略及其行为概率。
+
+当前神经网络路线采用候选动作打分模型：`move_encoding.py` 将每个候选动作编码成固定长度向量，网络对当前局面的每个合法动作分别打分。训练侧局面和动作编码使用当前方视角归一化；白方行棋时按 `square_id -> 51 - square_id` 做 180 度旋转，使己方前进方向在输入中保持一致。
 
 ## 常用命令入口
 
@@ -147,10 +168,34 @@ make trainer-test
 make tools
 ```
 
+多 opening arena 评测：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/arena.py \
+  --black supervised \
+  --white supervised \
+  --black-checkpoint trainer/checkpoints/candidate_move_net_rl_best.pt \
+  --white-checkpoint trainer/checkpoints/candidate_move_net_best.pt \
+  --games 100 \
+  --opening-random-plies 8 \
+  --seed 2026 \
+  --device cpu
+```
+
 生成数据：
 
 ```bash
 PYTHONPATH=interface:trainer python3 trainer/selfplay.py
+```
+
+生成 RL 探索数据：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/rl_selfplay.py \
+  --checkpoint trainer/checkpoints/candidate_move_net_best.pt \
+  --games 100 \
+  --output data/rl_iter_001.jsonl \
+  --device cpu
 ```
 
 检查数据：
@@ -164,6 +209,15 @@ PYTHONPATH=interface:trainer python3 trainer/inspect_dataset.py data/
 ```bash
 PYTHONPATH=interface:trainer python3 trainer/train_supervised.py data \
   --resume trainer/checkpoints/candidate_move_net_latest.pt \
+  --checkpoint-dir trainer/checkpoints \
+  --device cpu
+```
+
+RL candidate 训练：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/train_selfplay.py data/rf_data \
+  --resume trainer/checkpoints/candidate_move_net_best.pt \
   --checkpoint-dir trainer/checkpoints \
   --device cpu
 ```

@@ -1,0 +1,39 @@
+# 批量评测参数。
+# 命令行显式参数会覆盖本文件。默认 opening_random_plies 为 0，保留标准初始局面评测。
+
+# 黑方 agent：random、greedy、material、alphabeta、supervised。
+black: random
+
+# 白方 agent。
+white: greedy
+
+# 评测局数。
+games: 100
+
+# 每局最大半回合数；随机 opening 半回合也计入该预算。
+max_plies: 300
+
+# 每隔多少局打印一次进度。
+log_interval: 20
+
+# agent 随机性和 opening 随机开局的种子。
+seed: 1
+
+# 正式评测 agent 接管前，先由引擎从标准初始局面随机走多少个合法半回合。
+# 大于 0 可打破 deterministic 模型从固定开局重复同一条主线的问题。
+opening_random_plies: 0
+
+# MaterialAgent 配置；none 表示默认配置。
+material_config: none
+
+# AlphaBetaAgent 配置；none 表示默认配置。
+alphabeta_config: none
+
+# 黑方 supervised checkpoint；黑方不是 supervised 时可为 none。
+black_checkpoint: none
+
+# 白方 supervised checkpoint；白方不是 supervised 时可为 none。
+white_checkpoint: none
+
+# supervised 推理设备；none 表示自动选择。
+device: none

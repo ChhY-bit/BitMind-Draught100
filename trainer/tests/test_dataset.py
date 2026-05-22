@@ -8,6 +8,7 @@ from dataset import (
     batched,
     collate_batch,
     iter_jsonl_samples,
+    observation_from_sample,
     resolve_jsonl_files,
 )
 from move_encoding import MOVE_FEATURE_DIM
@@ -39,6 +40,9 @@ class DatasetTests(unittest.TestCase):
         self.assertGreater(len(item["move_features"]), 0)
         self.assertEqual(len(item["move_features"][0]), MOVE_FEATURE_DIM)
         self.assertIsInstance(item["policy_target_index"], int)
+        self.assertEqual(item["selected_policy_prob"], 1.0)
+        self.assertEqual(item["behavior_temperature"], 1.0)
+        self.assertEqual(item["behavior_value"], 0.0)
         self.assertIn("game_id", item["metadata"])
 
     def test_dataset_applies_source_weights(self):
@@ -69,6 +73,19 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(item["policy_weight"], 0.25)
         self.assertEqual(item["value_weight"], 1.5)
         self.assertEqual(item["metadata"]["source_name"], "weighted")
+
+    def test_dataset_rebuilds_observation_from_raw_squares(self):
+        sample = {
+            "observation": [[[9 for _col in range(10)] for _row in range(10)] for _c in range(6)],
+            "raw_squares": [0] * 50,
+            "side_to_move": 1,
+        }
+        sample["raw_squares"][34] = 3
+
+        observation = observation_from_sample(sample)
+
+        self.assertNotEqual(observation, sample["observation"])
+        self.assertEqual(sum(sum(row) for row in observation[0]), 1)
 
     def test_resolve_directory_and_iter_samples(self):
         with TemporaryDirectory() as tmp_dir:
@@ -121,6 +138,9 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(batch["move_mask"], [[1, 0], [1, 1]])
         self.assertEqual(batch["policy_target_index"], [0, 1])
         self.assertEqual(batch["value_target"], [1, -1])
+        self.assertEqual(batch["selected_policy_prob"], [1.0, 1.0])
+        self.assertEqual(batch["behavior_temperature"], [1.0, 1.0])
+        self.assertEqual(batch["behavior_value"], [0.0, 0.0])
         self.assertEqual(batch["policy_weight"], [1.0, 1.0])
         self.assertEqual(batch["value_weight"], [1.0, 1.0])
         self.assertEqual(len(batches), 2)

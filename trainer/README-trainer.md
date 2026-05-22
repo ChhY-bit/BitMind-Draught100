@@ -1,6 +1,6 @@
 # 训练环境说明
 
-`trainer/` 目录当前包含标准化环境、基础 agent、数据生成/读取、候选动作神经网络，以及第一版监督学习训练脚本。
+`trainer/` 目录当前包含标准化环境、基础 agent、数据生成/读取、候选动作神经网络、监督学习训练和第一版自博弈强化学习训练脚本。
 
 ## 当前文件
 
@@ -10,27 +10,34 @@ trainer/
   agents.py
   arena.py
   selfplay.py
+  rl_selfplay.py
   inspect_dataset.py
   dataset.py
   move_encoding.py
   model.py
   train_supervised.py
+  train_selfplay.py
+  config/arena.yaml
   config/material.yaml
   config/alphabeta.yaml
   config/selfplay.yaml
+  config/rl_selfplay.yaml
   config/model.yaml
   config/supervised.yaml
+  config/rl_train.yaml
   config/data_sources.yaml
   tests/
     test_env.py
     test_agents.py
     test_arena.py
     test_selfplay.py
+    test_rl_selfplay.py
     test_inspect_dataset.py
     test_move_encoding.py
     test_dataset.py
     test_model.py
     test_train_supervised.py
+    test_train_selfplay.py
   README-trainer.md
   README-network.md
 ```
@@ -39,18 +46,23 @@ trainer/
 - `agents.py`：基础 agent。
 - `arena.py`：批量对战评测器。
 - `selfplay.py`：对局数据生成器，保存 JSONL 训练样本。
+- `rl_selfplay.py`：训练专用 RL 自博弈生成器，按 temperature 从 checkpoint policy 中采样。
 - `inspect_dataset.py`：JSONL 数据检查器。
 - `dataset.py`：JSONL 数据读取器与 batch 组装工具。
 - `move_encoding.py`：候选动作向量编码器。
 - `model.py`：候选动作打分 policy/value 神经网络。
 - `train_supervised.py`：监督学习训练脚本，读取 JSONL 数据训练 `CandidateMoveNet`。
+- `train_selfplay.py`：第一版 Actor-Critic 风格 RL 训练脚本，读取 RL self-play JSONL 更新 candidate。
+- `config/arena.yaml`：arena 批量评测与随机 opening 参数。
 - `config/material.yaml`：`MaterialAgent` 的材料评估参数。
 - `config/alphabeta.yaml`：`AlphaBetaAgent` 的搜索深度和增强评估参数。
 - `config/selfplay.yaml`：selfplay 数据生成参数。
+- `config/rl_selfplay.yaml`：RL 自博弈探索采样参数。
 - `config/model.yaml`：`CandidateMoveNet` 的网络结构参数。
 - `config/supervised.yaml`：监督学习训练参数。
+- `config/rl_train.yaml`：RL self-play candidate 训练参数。
 - `config/data_sources.yaml`：监督训练数据源权重配置示例。
-- `tests/`：训练环境、agent、arena、selfplay、数据检查器、动作编码器、数据读取器、模型和监督训练测试。
+- `tests/`：训练环境、agent、arena、selfplay、RL self-play、数据检查器、动作编码器、数据读取器、模型、监督训练和 RL 训练测试。
 - `README-trainer.md`：本文档。
 - `README-network.md`：神经网络组件与动作编码设计记录。
 
@@ -117,13 +129,14 @@ obs[channel][row][col]
 | `2` | 对方普通子 |
 | `3` | 对方王 |
 | `4` | 合法棋位 |
-| `5` | 当前行棋方平面，黑方为 `0`，白方为 `1` |
+| `5` | 保留平面，当前统一为 `0` |
 
 说明：
 
-- 当前没有对棋盘做几何翻转。
+- 当前使用“当前行棋方视角”做方向归一化。黑方行棋时保持原棋盘方向；白方行棋时按 180 度旋转，相当于把棋位 `square_id` 映射为 `51 - square_id`。
 - 棋子通道使用“当前方/对方”视角，而不是固定黑白视角。
-- 第 5 通道只在 50 个合法棋位上填当前行棋方编号，非合法棋位为 `0`。
+- 归一化后，当前方普通子在神经网络输入中总是朝同一个方向前进。
+- 第 5 通道暂时不再提供黑/白身份信息，避免重新引入方向差异。
 
 初始局面下，黑方先手：
 
@@ -137,7 +150,8 @@ obs[channel][row][col]
 黑方走一步后轮到白方：
 
 ```text
-通道 5 在合法棋位上的值为 1
+白方局面会被旋转到当前方视角
+通道 5 仍全为 0
 ```
 
 ## Action 设计
@@ -345,7 +359,13 @@ PYTHONPATH=interface:trainer python3 trainer/arena.py --black alphabeta --white 
 
 ## 批量评测器 Arena
 
-`arena.py` 可以让两个 agent 批量对战，并统计胜负、最大步数局数、平均步数和耗时。
+`arena.py` 可以让两个 agent 批量对战，并统计胜负、最大步数局数、平均步数和耗时。默认参数来自：
+
+```text
+trainer/config/arena.yaml
+```
+
+命令行显式参数会覆盖该文件。
 
 示例：
 
@@ -358,12 +378,14 @@ PYTHONPATH=interface:trainer python3 trainer/arena.py --black random --white gre
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
+| `--config` | `trainer/config/arena.yaml` | arena YAML 配置。 |
 | `--black` | `random` | 黑方 agent，可选 `random`、`greedy`、`material`、`alphabeta`、`supervised`。 |
 | `--white` | `greedy` | 白方 agent，可选 `random`、`greedy`、`material`、`alphabeta`、`supervised`。 |
 | `--games` | `100` | 对战局数。 |
 | `--max-plies` | `300` | 每局最大半回合数。超过后记为 `max_plies`。 |
 | `--log-interval` | `20` | 每隔多少局打印一次进度。 |
 | `--seed` | `1` | 随机种子。 |
+| `--opening-random-plies` | `0` | 正式评测 agent 接管前，从标准初始局面随机走多少个合法半回合。 |
 | `--material-config` | 默认配置 | 指定 `MaterialAgent` 的 YAML 参数文件。 |
 | `--alphabeta-config` | 默认配置 | 指定 `AlphaBetaAgent` 的 YAML 参数文件。 |
 | `--black-checkpoint` | 无 | 黑方 `SupervisedAgent` 的 checkpoint。 |
@@ -385,6 +407,31 @@ arena: 20/100 games, black_wins=8 white_wins=12 draws=0 max_plies=0 avg_plies=92
 - `max_plies`：达到最大半回合数仍未结束的局数。
 - `avg_plies`：平均每局半回合数。
 - `elapsed`：累计耗时。
+
+### 随机 Opening
+
+两个 greedy checkpoint 从标准初始局面开始时，重复跑很多局往往仍是同一条确定性主线。可用随机 opening 先打破开局重复：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/arena.py \
+  --black supervised \
+  --white supervised \
+  --black-checkpoint trainer/checkpoints/candidate_move_net_rl_best.pt \
+  --white-checkpoint trainer/checkpoints/candidate_move_net_best.pt \
+  --games 100 \
+  --opening-random-plies 8 \
+  --seed 2026 \
+  --device cpu
+```
+
+随机 opening 只在正式评测 agent 接管前执行：
+
+- 每个 opening 半回合都由 C 引擎给出的合法动作随机产生。
+- `--seed` 固定时 opening 序列可复现。
+- opening 半回合计入该局 `--max-plies` 和 `avg_plies`。
+- opening 阶段可能触发强制吃子或提前终局；仍按正常引擎规则处理。
+
+第一版 arena 只让每局 opening 多样化，还没有自动做“同一 opening 换边”的 paired checkpoint 晋升评测。比较相近 candidate 与 base 时，仍应手动黑白换边，并结合对 AlphaBeta/material 的结果判断。
 
 可以用它做基线比较：
 
@@ -496,6 +543,60 @@ PYTHONPATH=interface:trainer python3 trainer/selfplay.py \
 ```text
 data/alphabeta_selfplay_001.jsonl
 ```
+
+## RL 自博弈数据生成
+
+`rl_selfplay.py` 是训练专用数据生成器。它直接加载 `CandidateMoveNet` checkpoint，在每个局面先让网络给所有合法候选动作打分，再按：
+
+```text
+softmax(policy_logits / temperature)
+```
+
+采样动作。这个探索入口与普通 `SupervisedAgent` 分离：arena、GUI 和普通 supervised 对局仍保持 greedy，RL 生成器负责保存探索采样时的概率和值预测。
+
+基本命令：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/rl_selfplay.py \
+  --checkpoint trainer/checkpoints/candidate_move_net_best.pt \
+  --games 100 \
+  --output data/rl_iter_001.jsonl \
+  --device cpu
+```
+
+默认配置文件：
+
+```text
+trainer/config/rl_selfplay.yaml
+```
+
+配置文件给默认参数，命令行显式参数会覆盖 YAML。第一版可调参数包括：
+
+| 参数 | 说明 |
+| --- | --- |
+| `--checkpoint` | 作为当前 policy/value 基座的 checkpoint。必须指定。 |
+| `--games` | 生成局数。 |
+| `--max-plies` | 每局最大半回合数。 |
+| `--temperature` | temperature softmax 采样温度，必须大于 `0`。 |
+| `--seed` | 探索采样随机种子。 |
+| `--output` | 输出 JSONL 路径。 |
+| `--log-interval` | 进度日志间隔。 |
+| `--device` | 推理设备，例如 `cpu` 或 `cuda`。 |
+| `--append` / `--auto-output-name` | 与普通 selfplay 一致的追加和防覆盖策略。 |
+
+RL JSONL 保留普通训练样本需要的 `raw_squares`、`observation`、`legal_moves`、`selected_move`、`final_result`、`value_target` 等字段，同时额外保存：
+
+| 字段 | 含义 |
+| --- | --- |
+| `sample_kind` | 当前为 `rl_selfplay`。 |
+| `behavior_policy` | 当前为 `temperature_softmax`。 |
+| `temperature` | 这一步采样使用的温度。 |
+| `policy_checkpoint` | 生成该样本的 checkpoint 路径。 |
+| `policy_probs` | 当前合法动作列表对应的采样概率。 |
+| `selected_policy_prob` | 实际选中动作的采样概率。 |
+| `predicted_value` | 采样时模型对当前局面的 value 预测。 |
+
+这些字段供后续 self-play 训练和更正式的策略更新使用。当前步骤只生成 RL 数据，还没有自动训练 candidate checkpoint 或自动晋升模型。
 
 JSONL 表示“一行一个 JSON 对象”。每一行是一手棋之前的训练样本，常用字段包括：
 
@@ -863,12 +964,96 @@ csv_log_interval_epochs: 5
 
 这表示每 5 个 epoch 写一行 CSV；最后一个 epoch 总会写入。CSV 使用逐行追加写入，不会把历史 CSV 全部读入内存，适合隔夜训练。
 
+## RL 自博弈训练
+
+`train_selfplay.py` 读取 `rl_selfplay.py` 生成的探索样本，从已有 checkpoint 训练一个新的 candidate。它与监督训练的区别是：RL 样本中被采样到的 `selected_move` 不是老师答案，不能直接按交叉熵模仿。
+
+当前采用 PPO 风格 clipped policy objective。它仍是 Actor-Critic 路线，但会用生成样本时保存的行为概率限制单轮策略偏移：
+
+```text
+advantage   = value_target - 样本中的 predicted_value
+old_prob    = 样本中的 selected_policy_prob
+new_prob    = 当前模型在样本 behavior temperature 下的 selected_move 概率
+ratio       = new_prob / old_prob
+
+surrogate_1 = ratio * advantage
+surrogate_2 = clip(ratio, 1-epsilon, 1+epsilon) * advantage
+policy_loss = - min(surrogate_1, surrogate_2)
+value_loss  = MSE(value, value_target)
+entropy     = 当前合法动作策略分布的熵
+
+total_loss =
+    policy_loss_weight * policy_loss
+  + value_loss_weight  * value_loss
+  - entropy_weight     * entropy
+```
+
+其中 `score_head` 承担 Actor 的动作评分职责，`value_head` 承担 Critic 的局面价值估计职责。`predicted_value` 是 rollout 时旧策略写入样本的 baseline；当前只使用终局 `value_target` 作为 return；TD/GAE 和自动晋升暂未实现。
+
+常用命令：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/train_selfplay.py data/rf_data \
+  --resume trainer/checkpoints/candidate_move_net_best.pt \
+  --config trainer/config/rl_train.yaml \
+  --checkpoint-dir trainer/checkpoints \
+  --device cpu
+```
+
+`--resume` 必须指定：
+
+- 从监督 checkpoint 起步时，只加载网络结构和权重，RL epoch 从 `1` 开始。
+- 从 `candidate_move_net_rl_*.pt` 继续训练时，会恢复 RL optimizer、RL epoch 和累计训练时间。
+
+RL 训练配置在：
+
+```text
+trainer/config/rl_train.yaml
+```
+
+关键参数：
+
+| 参数 | 说明 |
+| --- | --- |
+| `learning_rate` | RL candidate 更新学习率，默认比监督训练保守。 |
+| `policy_loss_weight` | Actor 策略损失权重。 |
+| `value_loss_weight` | Critic 价值损失权重。 |
+| `entropy_weight` | 熵奖励权重；总损失中以减号加入。 |
+| `advantage_clip` | Advantage 绝对值裁剪；`0` 表示不裁剪。 |
+| `ppo_clip_epsilon` | PPO ratio 裁剪宽度；`0.2` 对应主要限制在 `[0.8, 1.2]`。 |
+| `validation_split` | RL 验证集比例。 |
+
+训练时会打印：
+
+```text
+loss / policy_loss / value_loss
+entropy
+advantage_abs
+ratio / clip_fraction
+value_mae
+elapsed / cumulative_train_time
+```
+
+`policy_loss` 允许为负值，单独看它不能代表棋力提升。`ratio` 接近 `1` 表示 candidate 仍靠近生成数据时的行为策略，`clip_fraction` 过高表示大量样本已经撞到 PPO 限制。训练结束后必须用 `arena.py` 至少评测 candidate 与基座 checkpoint、AlphaBeta 的黑白换边对局。
+
+默认保存：
+
+```text
+trainer/checkpoints/candidate_move_net_rl_latest.pt
+trainer/checkpoints/candidate_move_net_rl_best.pt
+trainer/checkpoints/candidate_move_net_rl_epoch_<final_epoch>.pt
+trainer/checkpoints/rl_training_log_<experiment_key>.csv
+trainer/checkpoints/training_time.json
+```
+
+默认只保存本次训练结束的带 epoch checkpoint；显式传 `--save-every-epoch` 才保存所有中间 epoch。
+
 ## 后续方向
 
 建议后续依次实现：
 
-1. 设计自博弈/强化学习改进闭环，不再简单模仿监督模型自己的动作。
-2. 继续把 AlphaBeta 数据作为主要 policy 监督来源。
-3. 使用数据源权重机制实验不同来源的 policy/value 贡献。
+1. 用 `arena.py` 评测 RL candidate 是否优于当前基座，再决定是否进入下一轮 self-play。
+2. 继续把 AlphaBeta 数据作为稳定的 policy 监督来源。
+3. 按 PPO candidate 实验结果再决定是否加入更强的 return/value 目标或自动晋升机制。
 4. 数据规模继续增大后，实现 shard 采样或 streaming dataset。
-5. 等后续方法更多时，再统一实现模型评测脚本。
+5. 等后续方法更多时，再统一实现模型评测和晋升脚本。
