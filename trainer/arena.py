@@ -29,6 +29,7 @@ class ArenaConfig:
     opening_random_plies: int = 0
     material_config: Optional[str] = None
     alphabeta_config: Optional[str] = None
+    value_search_config: Optional[str] = None
     black_checkpoint: Optional[str] = None
     white_checkpoint: Optional[str] = None
     device: Optional[str] = None
@@ -135,6 +136,7 @@ def run_arena(
     seed: Optional[int],
     material_config_path: Optional[str] = None,
     alphabeta_config_path: Optional[str] = None,
+    value_search_config_path: Optional[str] = None,
     black_checkpoint_path: Optional[str] = None,
     white_checkpoint_path: Optional[str] = None,
     device: Optional[str] = None,
@@ -154,6 +156,7 @@ def run_arena(
         seed=seed,
         material_config_path=material_config_path,
         alphabeta_config_path=alphabeta_config_path,
+        value_search_config_path=value_search_config_path,
         supervised_checkpoint_path=black_checkpoint_path,
         device=device,
     )
@@ -163,6 +166,7 @@ def run_arena(
         seed=white_seed,
         material_config_path=material_config_path,
         alphabeta_config_path=alphabeta_config_path,
+        value_search_config_path=value_search_config_path,
         supervised_checkpoint_path=white_checkpoint_path,
         device=device,
     )
@@ -176,6 +180,7 @@ def run_arena(
         f"opening_random_plies={opening_random_plies} "
         f"material_config={material_config_path or 'default'} "
         f"alphabeta_config={alphabeta_config_path or 'default'} "
+        f"value_search_config={value_search_config_path or 'default'} "
         f"black_checkpoint={black_checkpoint_path or 'none'} "
         f"white_checkpoint={white_checkpoint_path or 'none'}"
     )
@@ -228,6 +233,11 @@ def parse_args() -> argparse.Namespace:
         help="YAML file for AlphaBetaAgent parameters.",
     )
     parser.add_argument(
+        "--value-search-config",
+        default=None,
+        help="YAML file for ValueSearchAgent parameters.",
+    )
+    parser.add_argument(
         "--black-checkpoint",
         default=None,
         help="Checkpoint path for black SupervisedAgent.",
@@ -256,6 +266,10 @@ def parse_args() -> argparse.Namespace:
         parser.error("--black supervised requires --black-checkpoint")
     if args.white == "supervised" and not args.white_checkpoint:
         parser.error("--white supervised requires --white-checkpoint")
+    if args.black == "valuesearch" and not args.black_checkpoint:
+        parser.error("--black valuesearch requires --black-checkpoint")
+    if args.white == "valuesearch" and not args.white_checkpoint:
+        parser.error("--white valuesearch requires --white-checkpoint")
     return args
 
 
@@ -272,6 +286,7 @@ def merge_arena_args(cli_args: argparse.Namespace) -> argparse.Namespace:
         "opening_random_plies",
         "material_config",
         "alphabeta_config",
+        "value_search_config",
         "black_checkpoint",
         "white_checkpoint",
         "device",
@@ -319,6 +334,7 @@ def main() -> None:
         seed=args.seed,
         material_config_path=args.material_config,
         alphabeta_config_path=args.alphabeta_config,
+        value_search_config_path=args.value_search_config,
         black_checkpoint_path=args.black_checkpoint,
         white_checkpoint_path=args.white_checkpoint,
         device=args.device,

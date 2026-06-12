@@ -1,0 +1,50 @@
+# Checkpoint 自动对比评测参数。
+# 命令行显式参数会覆盖本文件。
+
+# 评测预设：
+# custom 表示使用下面逐项参数；
+# quick 只跑 candidate vs baseline 快速筛选，不跑外部 agent；
+# standard 跑 candidate vs baseline，并用 material 做快速参考；
+# full 会额外跑 alphabeta，耗时明显更长；
+# alphabeta 只跑少量 alphabeta 外部参考。
+preset: custom
+
+# 每个方向、每个 seed/opening 组合的对局数。
+games: 100
+
+# 每局最大半回合数。
+max_plies: 500
+
+# arena 进度日志间隔；对比评测通常可以设大一点减少输出。
+log_interval: 100
+
+# 多个随机种子，用逗号分隔。
+seeds: 2026
+
+# 多个随机 opening 半回合数，用逗号分隔。
+opening_random_plies: 4
+
+# 外部参考 agent，用逗号分隔；可选 random,greedy,material,alphabeta。
+# alphabeta 很慢，默认不启用；需要严格评测时用 --preset full 或显式指定。
+external_agents: material
+
+# candidate 总胜率达到该值且没有明显短板时，建议 promote。
+promote_threshold: 0.53
+
+# candidate 总胜率低于该值时，建议 reject。
+reject_threshold: 0.50
+
+# 任一 seed/opening bucket 的胜率低于该值时，给出风险提示。
+bucket_floor: 0.45
+
+# JSON 报告输出路径；none 表示只打印终端报告。
+report: none
+
+# MaterialAgent 配置；none 表示默认配置。
+material_config: none
+
+# AlphaBetaAgent 配置；none 表示默认配置。
+alphabeta_config: none
+
+# supervised 推理设备；none 表示自动选择。
+device: none

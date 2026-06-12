@@ -1,4 +1,5 @@
 import unittest
+import random
 from tempfile import TemporaryDirectory
 from pathlib import Path
 
@@ -6,15 +7,19 @@ import torch
 
 from agents import (
     AlphaBetaAgent,
+    AlphaBetaPlusAgent,
     AlphaBetaConfig,
     GreedyCaptureAgent,
     MaterialConfig,
     MaterialAgent,
     RandomAgent,
     SupervisedAgent,
+    ValueSearchAgent,
+    ValueSearchConfig,
     evaluate_enhanced_position,
     load_alphabeta_config,
     load_material_config,
+    load_value_search_config,
     make_agent,
     material_score_for_side,
 )
@@ -49,9 +54,14 @@ class AgentTests(unittest.TestCase):
         self.assertIsInstance(make_agent("greedy", seed=1), GreedyCaptureAgent)
         self.assertIsInstance(make_agent("material", seed=1), MaterialAgent)
         self.assertIsInstance(make_agent("alphabeta", seed=1), AlphaBetaAgent)
+        self.assertIsInstance(make_agent("alphabeta_plus", seed=1), AlphaBetaPlusAgent)
 
         with self.assertRaises(ValueError):
             make_agent("unknown")
+
+    def test_make_value_search_agent_requires_checkpoint(self):
+        with self.assertRaises(ValueError):
+            make_agent("valuesearch")
 
     def test_supervised_agent_loads_checkpoint_and_returns_legal_action(self):
         with TemporaryDirectory() as tmp_dir:
@@ -72,6 +82,20 @@ class AgentTests(unittest.TestCase):
     def test_make_supervised_agent_requires_checkpoint(self):
         with self.assertRaises(ValueError):
             make_agent("supervised")
+
+    def test_load_value_search_config_from_yaml(self):
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "value_search.yaml"
+            path.write_text(
+                "search_depth: 2\ntop_k: 4\nterminal_value: 1\n",
+                encoding="utf-8",
+            )
+
+            config = load_value_search_config(str(path))
+
+        self.assertEqual(config.search_depth, 2)
+        self.assertEqual(config.top_k, 4)
+        self.assertEqual(config.terminal_value, 1)
 
     def test_material_score_for_side(self):
         observation = {"squares": [0] * 50}
@@ -207,6 +231,20 @@ class AgentTests(unittest.TestCase):
 
         self.assertEqual(action_id, 1)
 
+    def test_value_search_prefers_immediate_terminal_win(self):
+        actions = [
+            Move(action_id=0, path=(16, 21), captures=()),
+            Move(action_id=1, path=(17, 22), captures=()),
+        ]
+        observation = make_observation(0, [16, 17], [31])
+        agent = ValueSearchAgent.__new__(ValueSearchAgent)
+        agent._rng = random.Random(1)
+        agent.config = ValueSearchConfig(search_depth=1, top_k=0, terminal_value=1)
+
+        action_id = agent.select_action(observation, actions, FakeValueTerminalEnv())
+
+        self.assertEqual(action_id, 1)
+
 
 class FakeMaterialEnv:
     def __init__(self, observations):
@@ -227,6 +265,25 @@ class FakeMaterialEnv:
 
 
 class FakeObservationEnv:
+    def observation(self):
+        return [[[0 for _col in range(10)] for _row in range(10)] for _channel in range(6)]
+
+
+class FakeValueTerminalEnv:
+    def __init__(self):
+        self._selected_action = None
+
+    def clone(self):
+        return FakeValueTerminalEnv()
+
+    def step(self, action_id):
+        self._selected_action = action_id
+
+    def raw_observation(self):
+        if self._selected_action == 1:
+            return make_observation(1, [16, 17], [], game_result=1)
+        return make_observation(1, [16, 17], [31], game_result=2)
+
     def observation(self):
         return [[[0 for _col in range(10)] for _row in range(10)] for _channel in range(6)]
 

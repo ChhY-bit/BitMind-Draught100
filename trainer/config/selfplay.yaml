@@ -1,9 +1,9 @@
 # Selfplay 对局数据生成参数。
 
-# 黑方 agent，可选 random、greedy、material、alphabeta、supervised。
+# 黑方 agent，可选 random、greedy、material、alphabeta、supervised、valuesearch。
 black: alphabeta
 
-# 白方 agent，可选 random、greedy、material、alphabeta、supervised。
+# 白方 agent，可选 random、greedy、material、alphabeta、supervised、valuesearch。
 white: alphabeta
 
 # 生成局数。
@@ -27,13 +27,16 @@ material_config: none
 # AlphaBetaAgent 参数文件；不需要时写 none，表示使用默认 alphabeta.yaml。
 alphabeta_config: none
 
-# 黑方 SupervisedAgent checkpoint；仅 black 为 supervised 时需要。
+# ValueSearchAgent 参数文件；不需要时写 none，表示使用默认 value_search.yaml。
+value_search_config: none
+
+# 黑方 SupervisedAgent/ValueSearchAgent checkpoint；仅 black 为 supervised/valuesearch 时需要。
 black_checkpoint: none
 
-# 白方 SupervisedAgent checkpoint；仅 white 为 supervised 时需要。
+# 白方 SupervisedAgent/ValueSearchAgent checkpoint；仅 white 为 supervised/valuesearch 时需要。
 white_checkpoint: none
 
-# SupervisedAgent 设备；none 表示自动选择，CPU 可写 cpu，GPU 可写 cuda。
+# SupervisedAgent/ValueSearchAgent 设备；none 表示自动选择，CPU 可写 cpu，GPU 可写 cuda。
 device: none
 
 # 是否追加写入 output；1 表示追加，0 表示覆盖/新建。

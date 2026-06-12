@@ -10,18 +10,36 @@
 - C-Python 接口与 Python 标准环境。
 - Tkinter GUI，可人类/随机AI/监督模型AI对局。
 - 传统基线 agent：random、greedy、material、alphabeta。
+- 强搜索 agent：`alphabeta_plus`，默认使用比 `alphabeta` 更深的搜索，用作强教师和高水平对局智能体入口。
 - 候选动作打分神经网络 `CandidateMoveNet`。
+- `ValueSearchAgent`：加载同一 checkpoint，用 value_head 对走后局面做浅层 minimax 搜索，作为“神经网络 + 搜索”的最小试验入口。
 - selfplay JSONL 数据生成、检查、读取、训练 batch 组装。
 - 训练专用 RL self-play JSONL 生成器，可从 `CandidateMoveNet` checkpoint 按 temperature softmax 探索采样并记录行为概率。
 - RL candidate 训练器，读取 RL self-play JSONL 做 PPO 风格 clipped policy/value 更新。
 - supervised 监督训练、checkpoint 保存、CSV 日志、累计训练时间。
 - `SupervisedAgent`，可加载 `.pt/.pth` 模型并在 arena / selfplay / GUI 中决策。
 - Arena 支持 YAML 默认参数和可复现随机 opening，可减少确定性 checkpoint 从固定初始局面重复同一主线。
+- 自动 checkpoint 对比工具，支持 candidate vs baseline 多 seed、多 opening、换边汇总，并可对 material/alphabeta 等外部 agent 做参考评测。
+- 第一版搜索改进数据生成器 `trainer/search_improve.py`：可从现有 JSONL 样本恢复 C 环境局面，用 AlphaBeta 为当前合法动作重新打分，并输出兼容现有监督训练器的改进 policy target。
+- `trainer/search_improve.py` 支持 `--min-score-margin` 过滤低置信搜索标签，并支持 `--position-sample-rate` 从更宽输入局面中随机抽样。
 - 监督训练数据源权重，支持按来源分别设置 policy/value loss 权重。
 - 当前方视角归一化 observation 与动作编码：白方行棋时按 `square_id -> 51 - square_id` 做 180 度旋转，使己方前进方向一致。
 - GUI 支持 180 度旋转棋盘显示，编号、棋子和点击位置一起旋转。
 
-当前已经跳过“模型辅助 AlphaBeta”。曾实验过 `SupervisedAgent` 的 temperature/top-k/epsilon 探索自博弈，但未带来稳定棋力提升，相关接口已从主线清理。探索采样现放在独立的 `trainer/rl_selfplay.py`，策略更新放在 `trainer/train_selfplay.py`，普通 `SupervisedAgent` 仍保持 greedy。下一步应评测 RL candidate 是否值得晋升，再决定是否增强 RL 更新算法。
+曾实验过 `SupervisedAgent` 的 temperature/top-k/epsilon 探索自博弈，但未带来稳定棋力提升，相关接口已从主线清理。探索采样现放在独立的 `trainer/rl_selfplay.py`，策略更新放在 `trainer/train_selfplay.py`，普通 `SupervisedAgent` 仍保持 greedy。当前已补入最小 `ValueSearchAgent`，但实验显示当前 `value_head` 尚不能单独指导落子。项目最终目标仍是“接近深层 AlphaBeta 棋力、但推理效率更高”的强化学习/神经网络智能体；AlphaBeta 应作为教师、评测基准和数据来源，而不是最终主线。
+
+## 关键实验结论
+
+后续新会话请优先读取本节，避免重复走弯路：
+
+- 当前最强稳定传统 agent 仍是 `AlphaBetaAgent`；当前神经网络 agent 还不能稳定接近 AlphaBeta，更不能替代深层 AlphaBeta。
+- 监督模型/当前 RL 模型能高胜率击败 random/material，但不是 100% 稳赢，也明显弱于 AlphaBeta。这是正常的近似模型局限，不代表引擎错误。
+- 简化 PPO 路线已跑通闭环，但提升开始停滞：多轮 candidate 常在 candidate/base 对比中约 `51%~52%`，难稳定超过 `promote_threshold=0.53`。
+- `compare_checkpoints.py` 的 `quick/standard/full` 分级评测可继续用于晋级判断；不要每次默认跑 AlphaBeta，太慢。
+- `ValueSearchAgent` 纯 `value_head` depth=1 实验失败：同一 `candidate_move_net_rl_best.pt` 下，`valuesearch` 对 `supervised` 换边合计约 `32:166`，说明当前 `value_head` 不能直接做走后局面排序。
+- 用 RL 数据做 `policy_weight=0,value_weight=1` 的 value-only 全网络微调失败：`value_tune/candidate_move_net_latest.pt` 对 `candidate_move_net_rl_best.pt` 的 quick 评测约 `37:56`，`decisive_wr=0.398`，因为 value loss 更新共享 `board_encoder` 后破坏了 policy。
+- 不建议继续在“纯 ValueSearch / value-only 全网络微调 / 反复小批量简化 PPO”上消耗太多时间。
+- 重要路线修正：强化学习仍是主线，但应从简化 PPO 小修小补转向更标准的“搜索改进策略目标 + 自博弈晋级”路线。更像 AlphaZero：用搜索生成更强 policy target / value target，再训练网络逼近搜索改进后的策略。
 
 ## 规则内核
 
@@ -110,11 +128,13 @@ GreedyCaptureAgent greedy
 MaterialAgent     material
 AlphaBetaAgent    alphabeta
 SupervisedAgent   supervised
+ValueSearchAgent  valuesearch
 ```
 
 - `MaterialAgent`：一步试走材料评估，配置在 `trainer/config/material.yaml`。
 - `AlphaBetaAgent`：传统 Alpha-Beta 搜索，默认深度和增强评估在 `trainer/config/alphabeta.yaml`。叶子评估含材料、推进、中心、边线、底线守卫。
 - `SupervisedAgent`：加载 `CandidateMoveNet` checkpoint，对所有合法动作编码并根据 policy logits 贪心选择最高分动作。同一 checkpoint 可执黑或执白。
+- `ValueSearchAgent`：加载 `CandidateMoveNet` checkpoint，用 `value_head` 对模拟后的局面做浅层 minimax，配置在 `trainer/config/value_search.yaml`。当前实验证明纯 value 引导效果很差，保留作研究入口，不应作为主力 agent。
 
 `trainer/arena.py` 支持批量评测：
 
@@ -141,7 +161,20 @@ PYTHONPATH=interface:trainer python3 trainer/arena.py \
   --device cpu
 ```
 
-Opening 动作仍由引擎合法动作随机产生，计入该局 `max_plies` 与 `avg_plies`；同 seed 可复现。当前还没有自动做同一 opening 的换边 paired 晋升评测。
+Opening 动作仍由引擎合法动作随机产生，计入该局 `max_plies` 与 `avg_plies`；同 seed 可复现。相近 checkpoint 的晋升评测优先使用下面的自动换边工具。
+
+自动晋升评测入口：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/compare_checkpoints.py \
+  --candidate trainer/checkpoints/candidate_move_net_rl_best.pt \
+  --baseline trainer/checkpoints/candidate_move_net_rl_iter_003_best.pt \
+  --preset quick \
+  --report reports/compare_iter_004.json \
+  --device cpu
+```
+
+默认配置：`trainer/config/compare.yaml`。主评测自动按 `seeds` 和 `opening_random_plies` 做 candidate/base 换边汇总；外部参考默认只跑 `material`，避免 AlphaBeta 评测过慢。`--preset quick` 只跑 candidate/base 快筛，`standard` 跑 material 参考，`full` 才跑 `material,alphabeta`，`alphabeta` 可单独做少量强基准检查。晋升建议使用 `promote_threshold=0.53`、`reject_threshold=0.50`、`bucket_floor=0.45`。
 
 ## 数据生成与数据集
 
@@ -333,9 +366,11 @@ loss        = policy_weight * policy_loss
 
 默认保存 `candidate_move_net_rl_latest.pt`、`candidate_move_net_rl_best.pt` 和本次结束的 `candidate_move_net_rl_epoch_<final>.pt`，并记录 `rl_training_log_<experiment_key>.csv` 与累计训练时间。RL 日志含 PPO `ratio` 和 `clip_fraction`。该脚本当前只产生 candidate，不自动评测或晋升。
 
+`trainer/config/rl_train.yaml` 当前采用稳定优先默认：`learning_rate=0.00005`、`advantage_clip=1.5`、`ppo_clip_epsilon=0.1`。这是在候选模型接近但未达晋级线、且额外训练出现 quick reject 后调整的，目的是减小单轮 PPO 对已通过基座的破坏风险。
+
 ## 当前模型表现
 
-最新 `candidate_move_net_best.pt` 的阶段性 arena 结果：
+监督基座 `candidate_move_net_best.pt` 的阶段性 arena 结果：
 
 ```text
 vs random:
@@ -357,7 +392,54 @@ vs alphabeta:
 alphabeta > supervised > material > random
 ```
 
-监督学习已经跑通且有效。继续堆 epoch 容易过拟合，优先使用 `best.pt` 做评测。后续不做模型辅助 AlphaBeta，也不保留简单 supervised 探索自博弈作为主线，准备转向更正式的自博弈改进/强化学习路线。
+监督学习已经跑通且有效。继续堆 epoch 容易过拟合，优先使用 `best.pt` 做评测。
+
+RL/PPO 阶段重要结果：
+
+```text
+candidate_move_net_rl_best.pt 是当前较稳定 RL 基座。
+PPO candidate 曾相对监督基座略有提升，但相对自身上一代经常只能到 51%-52%。
+额外训练 candidate 有时 quick reject，有时 inconclusive；尚未形成稳定晋级趋势。
+```
+
+最近一次候选相关结论：
+
+```text
+rl_iter_extra/candidate_move_net_rl_latest.pt:
+  quick 曾约 candidate=48 baseline=45，wr=0.516，inconclusive
+  full 汇总 candidate=387 baseline=367，wr=0.513，仍 inconclusive
+  对 alphabeta 外部参考略好于 baseline，但不够稳定，不应晋级
+
+value_tune/candidate_move_net_latest.pt:
+  quick 约 candidate=37 baseline=56，wr=0.398，reject
+  不要使用该 checkpoint 继续训练或生成数据
+```
+
+当前认识：如果短期只追求最强对局，直接用 `AlphaBetaAgent`；但项目长期目标是神经网络/强化学习智能体达到接近深层 AlphaBeta 的水平且推理效率更高，因此强化学习仍应作为主线。下一阶段不要继续零散尝试，而应转向“搜索改进数据 / MCTS visit count policy target / 自动晋级”的更标准路线。
+
+2026-05-24 自主实验补充：
+
+```text
+search_improved_ab_depth2_margin50_cons:
+  数据：从 alphabeta_clean 中用 depth=2 AlphaBeta 重新标注，保留 search_score_margin >= 50 的 5000 样本。
+  训练：从 candidate_move_net_rl_best.pt 低学习率 policy-only 微调 3 epoch。
+  quick：candidate=52 baseline=42 maxed=6 decisive_wr=0.553，promote。
+  standard：candidate=399 baseline=355 maxed=46 decisive_wr=0.529，inconclusive，略低于 0.53 晋级线。
+  alphabeta 外部参考：candidate_wr=0.060，baseline_wr=0.050，仍远弱于 AlphaBeta。
+
+search_improved_ab_depth2_margin50_tiny2:
+  在同一 5000 样本上继续 2 epoch 极小学习率微调，quick 回落到 decisive_wr=0.500，不应使用。
+
+search_improved_ab_margin50_broadmix:
+  将高置信搜索样本与全量 alphabeta_clean 低权重混合训练，quick decisive_wr=0.417，reject，不应使用。
+
+alphabeta_plus:
+  新增强搜索 agent，默认 search_depth=3。
+  对默认 alphabeta 换边实验：
+    alphabeta_plus 黑 vs alphabeta 白：13:4，maxed=3。
+    alphabeta 黑 vs alphabeta_plus 白：2:17，maxed=1。
+  当前若只看对局性能，alphabeta_plus 已明显强于默认 alphabeta，但速度明显更慢。
+```
 
 ## 测试状态
 
@@ -374,7 +456,7 @@ make random-test
 
 - C 引擎：棋盘编号、初始化、复制、终局、普通子/王移动吃子连跳、最多吃子、屏障、升王、严格动作校验、随机对局。
 - Python 接口：reset、observation、legal moves、step、clone 等。
-- Trainer：环境、agent、arena YAML 与随机 opening、selfplay YAML/追加/自动命名、RL self-play temperature 采样与 JSONL 字段、PPO ratio 裁剪策略更新和 candidate checkpoint、数据检查、数据读取、当前方视角动作/局面编码、模型前向、监督训练 checkpoint/CSV/累计时间、数据源 policy/value 权重。
+- Trainer：环境、agent、arena YAML 与随机 opening、自动 checkpoint 对比报告、selfplay YAML/追加/自动命名、RL self-play temperature 采样与 JSONL 字段、PPO ratio 裁剪策略更新和 candidate checkpoint、数据检查、数据读取、当前方视角动作/局面编码、模型前向、监督训练 checkpoint/CSV/累计时间、数据源 policy/value 权重。
 
 历史重要修复：王连跳可以合法回到出发格，执行器不能因起点等于终点而拒绝。
 
@@ -414,9 +496,12 @@ PYTHONPATH=interface:trainer python3 trainer/arena.py \
 
 ## 未完成事项
 
-- candidate 与基座模型的评测、接受或回退机制。
-- 同一 opening 自动换边的 paired checkpoint 晋升评测。
-- TD/GAE 或更强的 return/value 目标是否需要引入，待 PPO candidate 实验后判断。
+- 更成熟的自动接受/回退机制；当前 `compare_checkpoints.py` 只给建议，不移动 checkpoint。
+- 搜索改进数据生成器目前先采用单一 best move 目标，尚未实现候选动作评分分布/visit-count 分布，也尚未接入自动训练与晋级闭环。初次未过滤 depth=2 search-improved 直接微调已被 quick reject，后续应优先使用 score margin 过滤、低学习率和混合训练防止策略漂移。
+- 设计 AlphaZero 风格最小闭环：当前网络 -> 搜索自博弈/搜索改进数据 -> 训练 policy/value -> 自动评测 -> 晋级/回退。
+- TD/GAE 或更强 return/value 目标尚未实现；当前简化 PPO 仅用终局胜负和 rollout predicted_value。
+- `ValueSearchAgent` 目前纯 value 引导失败；若继续用，需要改成 policy/value 混合或等 value head 明显增强后再试。
+- value-only 训练如果要继续，必须避免破坏 policy，例如冻结 `board_encoder/move_encoder/score_head` 只训 `value_head`；但这不是当前推荐主线。
 - 更大数据时的 streaming dataset 或 shard 采样策略。
 - 训练曲线可视化/导出。
 - 更系统的多模型评测脚本，等后续方法更多时再统一设计。
@@ -425,4 +510,15 @@ PYTHONPATH=interface:trainer python3 trainer/arena.py \
 
 ## 建议下一步
 
-用 `arena.py --opening-random-plies` 黑白换边复测 PPO RL candidate 与基座 checkpoint、AlphaBeta、material。朴素 advantage policy gradient 已在首次 candidate 实验中明显退化，当前 PPO 目标用于限制 candidate 单轮偏离行为策略的幅度；随机 opening 用于减少固定开局 deterministic 主线对比较结果的支配。
+建议新会话不要继续把主要精力放在简化 PPO 小步微调上。下一步更值得实现：
+
+```text
+搜索改进数据生成器
+  输入：已有 JSONL 局面或自博弈局面
+  对每个局面：调用 C 引擎合法动作，使用 AlphaBeta/轻量搜索评估候选动作
+  输出：更强 policy target（先可用单一 best move，后续扩展为分布/visit counts）和 value target
+  训练：用 train_supervised.py 或新训练器学习搜索改进后的策略
+  评测：compare_checkpoints.py quick -> standard -> full，只有 promote 才晋级
+```
+
+这条路线符合最终目标：AlphaBeta 作为教师/搜索改进器，神经网络学习逼近强搜索，从而获得接近深层搜索但更低推理成本的智能体。后续若该数据生成器有效，再演进到真正 MCTS 自博弈和 visit count target。

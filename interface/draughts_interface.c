@@ -103,6 +103,49 @@ int draughts_env_copy(DraughtsEnvHandle *dst, const DraughtsEnvHandle *src)
     return DRAUGHTS_OK;
 }
 
+int draughts_env_set_state(
+    DraughtsEnvHandle *env,
+    const unsigned char squares[DRAUGHTS_SQUARE_COUNT],
+    unsigned char side_to_move,
+    DraughtsObservation *observation
+)
+{
+    int i;
+    int result;
+
+    if (env == NULL || squares == NULL) {
+        return DRAUGHTS_ERR_NULL;
+    }
+
+    result = draughts_clear(&env->state);
+    if (result != DRAUGHTS_OK) {
+        return result;
+    }
+
+    for (i = 0; i < DRAUGHTS_SQUARE_COUNT; ++i) {
+        result = draughts_set_piece(&env->state, i + 1, (DraughtsPiece)squares[i]);
+        if (result != DRAUGHTS_OK) {
+            return result;
+        }
+    }
+
+    result = draughts_set_side_to_move(&env->state, (DraughtsSide)side_to_move);
+    if (result != DRAUGHTS_OK) {
+        return result;
+    }
+
+    result = refresh_env(env);
+    if (result != DRAUGHTS_OK) {
+        return result;
+    }
+
+    if (observation != NULL) {
+        return fill_observation(env, observation);
+    }
+
+    return DRAUGHTS_OK;
+}
+
 int draughts_env_get_observation(const DraughtsEnvHandle *env, DraughtsObservation *observation)
 {
     return fill_observation(env, observation);

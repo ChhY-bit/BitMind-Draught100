@@ -1,0 +1,11 @@
+# 单轮极小步长微调，用于混合宽分布数据时降低策略漂移。
+epochs: 1
+batch_size: 64
+learning_rate: 0.00005
+value_loss_weight: 0.0
+validation_split: 0.1
+seed: 6
+shuffle: 1
+log_interval: 200
+csv_log_interval_epochs: 1
+num_workers: 0

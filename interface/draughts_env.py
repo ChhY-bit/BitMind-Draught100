@@ -117,6 +117,14 @@ def _load_library(library_path: Optional[str]) -> ctypes.CDLL:
     ]
     lib.draughts_env_copy.restype = ctypes.c_int
 
+    lib.draughts_env_set_state.argtypes = [
+        ctypes.POINTER(_DraughtsEnvHandle),
+        ctypes.POINTER(ctypes.c_ubyte),
+        ctypes.c_ubyte,
+        ctypes.POINTER(_DraughtsObservation),
+    ]
+    lib.draughts_env_set_state.restype = ctypes.c_int
+
     lib.draughts_env_get_observation.argtypes = [
         ctypes.POINTER(_DraughtsEnvHandle),
         ctypes.POINTER(_DraughtsObservation),
@@ -187,6 +195,22 @@ class DraughtsEnv:
             ctypes.byref(observation),
         )
         _check_result(result, "draughts_env_reset")
+        return _observation_to_dict(observation)
+
+    def set_state(self, squares: List[int], side_to_move: int) -> Dict[str, object]:
+        if len(squares) != DRAUGHTS_SQUARE_COUNT:
+            raise ValueError(f"squares must contain {DRAUGHTS_SQUARE_COUNT} values")
+        c_squares = (ctypes.c_ubyte * DRAUGHTS_SQUARE_COUNT)(
+            *(int(piece) for piece in squares)
+        )
+        observation = _DraughtsObservation()
+        result = self._lib.draughts_env_set_state(
+            ctypes.byref(self._env),
+            c_squares,
+            int(side_to_move),
+            ctypes.byref(observation),
+        )
+        _check_result(result, "draughts_env_set_state")
         return _observation_to_dict(observation)
 
     def observation(self) -> Dict[str, object]:

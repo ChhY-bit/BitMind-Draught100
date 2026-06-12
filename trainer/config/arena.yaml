@@ -1,7 +1,7 @@
 # 批量评测参数。
 # 命令行显式参数会覆盖本文件。默认 opening_random_plies 为 0，保留标准初始局面评测。
 
-# 黑方 agent：random、greedy、material、alphabeta、supervised。
+# 黑方 agent：random、greedy、material、alphabeta、supervised、valuesearch。
 black: random
 
 # 白方 agent。
@@ -29,11 +29,14 @@ material_config: none
 # AlphaBetaAgent 配置；none 表示默认配置。
 alphabeta_config: none
 
-# 黑方 supervised checkpoint；黑方不是 supervised 时可为 none。
+# ValueSearchAgent 配置；none 表示默认配置。
+value_search_config: none
+
+# 黑方 supervised/valuesearch checkpoint；黑方不是 supervised/valuesearch 时可为 none。
 black_checkpoint: none
 
-# 白方 supervised checkpoint；白方不是 supervised 时可为 none。
+# 白方 supervised/valuesearch checkpoint；白方不是 supervised/valuesearch 时可为 none。
 white_checkpoint: none
 
-# supervised 推理设备；none 表示自动选择。
+# supervised/valuesearch 推理设备；none 表示自动选择。
 device: none

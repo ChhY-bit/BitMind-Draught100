@@ -29,8 +29,9 @@ BitMind-Draught100
 +-- trainer/                         训练、搜索、数据生成
 |   |
 |   +-- env.py                        标准化训练环境
-|   +-- agents.py                     random/greedy/material/alphabeta/supervised
+|   +-- agents.py                     random/greedy/material/alphabeta/supervised/valuesearch
 |   +-- arena.py                      批量 agent 对战评测
+|   +-- compare_checkpoints.py        自动 checkpoint 晋升评测
 |   +-- selfplay.py                   JSONL 对局数据生成
 |   +-- rl_selfplay.py                训练专用 RL 探索自博弈数据生成
 |   +-- inspect_dataset.py            JSONL 数据检查
@@ -94,6 +95,10 @@ StandardDraughtsEnv
         v                         v
 trainer/agents.py          trainer/arena.py
 agent 决策                 批量评测胜率/耗时，可选随机 opening
+        |
+        v
+trainer/compare_checkpoints.py
+多 seed/opening 换边评测 candidate vs baseline，并可对外部基线做参考评测
         |
         v
 trainer/selfplay.py
@@ -181,6 +186,19 @@ PYTHONPATH=interface:trainer python3 trainer/arena.py \
   --seed 2026 \
   --device cpu
 ```
+
+自动 checkpoint 对比：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/compare_checkpoints.py \
+  --candidate trainer/checkpoints/candidate_move_net_rl_best.pt \
+  --baseline trainer/checkpoints/candidate_move_net_rl_iter_003_best.pt \
+  --preset quick \
+  --report reports/compare_iter_004.json \
+  --device cpu
+```
+
+`compare_checkpoints.py` 支持 `quick`、`standard`、`full`、`alphabeta` 评测预设。日常 PPO 迭代先用 `quick` 或 `standard`，只有候选模型接近晋级时再用包含 AlphaBeta 的慢速 `full` 评测。
 
 生成数据：
 

@@ -1,0 +1,479 @@
+{
+  "candidate": "trainer/checkpoints/search_improved_ab_depth2_margin50_cons/candidate_move_net_latest.pt",
+  "baseline": "trainer/checkpoints/candidate_move_net_rl_best.pt",
+  "settings": {
+    "preset": "standard",
+    "games": 100,
+    "max_plies": 500,
+    "log_interval": 100,
+    "seeds": [
+      2028,
+      2029
+    ],
+    "opening_random_plies": [
+      2,
+      8
+    ],
+    "external_agents": [
+      "material"
+    ],
+    "promote_threshold": 0.53,
+    "reject_threshold": 0.5,
+    "bucket_floor": 0.45,
+    "material_config": null,
+    "alphabeta_config": null,
+    "device": "cpu"
+  },
+  "main": {
+    "buckets": [
+      {
+        "seed": 2028,
+        "opening_random_plies": 2,
+        "candidate_black": {
+          "games": 100,
+          "black_wins": 50,
+          "white_wins": 47,
+          "draws": 0,
+          "max_plies": 3,
+          "total_plies": 11380,
+          "avg_plies": 113.8
+        },
+        "baseline_black": {
+          "games": 100,
+          "black_wins": 42,
+          "white_wins": 51,
+          "draws": 0,
+          "max_plies": 7,
+          "total_plies": 13224,
+          "avg_plies": 132.24
+        },
+        "score": {
+          "candidate_wins": 101,
+          "baseline_wins": 89,
+          "draws": 0,
+          "max_plies": 10,
+          "games": 200,
+          "total_plies": 24604,
+          "avg_plies": 123.02,
+          "decisive_games": 190,
+          "candidate_win_rate": 0.531578947368421
+        }
+      },
+      {
+        "seed": 2029,
+        "opening_random_plies": 2,
+        "candidate_black": {
+          "games": 100,
+          "black_wins": 44,
+          "white_wins": 52,
+          "draws": 0,
+          "max_plies": 4,
+          "total_plies": 11818,
+          "avg_plies": 118.18
+        },
+        "baseline_black": {
+          "games": 100,
+          "black_wins": 40,
+          "white_wins": 55,
+          "draws": 0,
+          "max_plies": 5,
+          "total_plies": 12444,
+          "avg_plies": 124.44
+        },
+        "score": {
+          "candidate_wins": 99,
+          "baseline_wins": 92,
+          "draws": 0,
+          "max_plies": 9,
+          "games": 200,
+          "total_plies": 24262,
+          "avg_plies": 121.31,
+          "decisive_games": 191,
+          "candidate_win_rate": 0.518324607329843
+        }
+      },
+      {
+        "seed": 2028,
+        "opening_random_plies": 8,
+        "candidate_black": {
+          "games": 100,
+          "black_wins": 53,
+          "white_wins": 34,
+          "draws": 0,
+          "max_plies": 13,
+          "total_plies": 15287,
+          "avg_plies": 152.87
+        },
+        "baseline_black": {
+          "games": 100,
+          "black_wins": 47,
+          "white_wins": 49,
+          "draws": 0,
+          "max_plies": 4,
+          "total_plies": 11741,
+          "avg_plies": 117.41
+        },
+        "score": {
+          "candidate_wins": 102,
+          "baseline_wins": 81,
+          "draws": 0,
+          "max_plies": 17,
+          "games": 200,
+          "total_plies": 27028,
+          "avg_plies": 135.14,
+          "decisive_games": 183,
+          "candidate_win_rate": 0.5573770491803278
+        }
+      },
+      {
+        "seed": 2029,
+        "opening_random_plies": 8,
+        "candidate_black": {
+          "games": 100,
+          "black_wins": 41,
+          "white_wins": 54,
+          "draws": 0,
+          "max_plies": 5,
+          "total_plies": 12185,
+          "avg_plies": 121.85
+        },
+        "baseline_black": {
+          "games": 100,
+          "black_wins": 39,
+          "white_wins": 56,
+          "draws": 0,
+          "max_plies": 5,
+          "total_plies": 12361,
+          "avg_plies": 123.61
+        },
+        "score": {
+          "candidate_wins": 97,
+          "baseline_wins": 93,
+          "draws": 0,
+          "max_plies": 10,
+          "games": 200,
+          "total_plies": 24546,
+          "avg_plies": 122.73,
+          "decisive_games": 190,
+          "candidate_win_rate": 0.5105263157894737
+        }
+      }
+    ],
+    "overall": {
+      "candidate_wins": 399,
+      "baseline_wins": 355,
+      "draws": 0,
+      "max_plies": 46,
+      "games": 800,
+      "total_plies": 100440,
+      "avg_plies": 125.55,
+      "decisive_games": 754,
+      "candidate_win_rate": 0.5291777188328912
+    },
+    "recommendation": "inconclusive"
+  },
+  "external": {
+    "material": {
+      "candidate": {
+        "buckets": [
+          {
+            "seed": 2028,
+            "opening_random_plies": 2,
+            "model_black": {
+              "games": 100,
+              "black_wins": 96,
+              "white_wins": 4,
+              "draws": 0,
+              "max_plies": 0,
+              "total_plies": 8422,
+              "avg_plies": 84.22
+            },
+            "external_black": {
+              "games": 100,
+              "black_wins": 5,
+              "white_wins": 95,
+              "draws": 0,
+              "max_plies": 0,
+              "total_plies": 8079,
+              "avg_plies": 80.79
+            },
+            "score": {
+              "candidate_wins": 191,
+              "baseline_wins": 9,
+              "draws": 0,
+              "max_plies": 0,
+              "games": 200,
+              "total_plies": 16501,
+              "avg_plies": 82.505,
+              "decisive_games": 200,
+              "candidate_win_rate": 0.955
+            }
+          },
+          {
+            "seed": 2029,
+            "opening_random_plies": 2,
+            "model_black": {
+              "games": 100,
+              "black_wins": 91,
+              "white_wins": 9,
+              "draws": 0,
+              "max_plies": 0,
+              "total_plies": 8189,
+              "avg_plies": 81.89
+            },
+            "external_black": {
+              "games": 100,
+              "black_wins": 4,
+              "white_wins": 96,
+              "draws": 0,
+              "max_plies": 0,
+              "total_plies": 8406,
+              "avg_plies": 84.06
+            },
+            "score": {
+              "candidate_wins": 187,
+              "baseline_wins": 13,
+              "draws": 0,
+              "max_plies": 0,
+              "games": 200,
+              "total_plies": 16595,
+              "avg_plies": 82.975,
+              "decisive_games": 200,
+              "candidate_win_rate": 0.935
+            }
+          },
+          {
+            "seed": 2028,
+            "opening_random_plies": 8,
+            "model_black": {
+              "games": 100,
+              "black_wins": 95,
+              "white_wins": 5,
+              "draws": 0,
+              "max_plies": 0,
+              "total_plies": 8479,
+              "avg_plies": 84.79
+            },
+            "external_black": {
+              "games": 100,
+              "black_wins": 3,
+              "white_wins": 97,
+              "draws": 0,
+              "max_plies": 0,
+              "total_plies": 8481,
+              "avg_plies": 84.81
+            },
+            "score": {
+              "candidate_wins": 192,
+              "baseline_wins": 8,
+              "draws": 0,
+              "max_plies": 0,
+              "games": 200,
+              "total_plies": 16960,
+              "avg_plies": 84.8,
+              "decisive_games": 200,
+              "candidate_win_rate": 0.96
+            }
+          },
+          {
+            "seed": 2029,
+            "opening_random_plies": 8,
+            "model_black": {
+              "games": 100,
+              "black_wins": 93,
+              "white_wins": 7,
+              "draws": 0,
+              "max_plies": 0,
+              "total_plies": 8271,
+              "avg_plies": 82.71
+            },
+            "external_black": {
+              "games": 100,
+              "black_wins": 5,
+              "white_wins": 95,
+              "draws": 0,
+              "max_plies": 0,
+              "total_plies": 8135,
+              "avg_plies": 81.35
+            },
+            "score": {
+              "candidate_wins": 188,
+              "baseline_wins": 12,
+              "draws": 0,
+              "max_plies": 0,
+              "games": 200,
+              "total_plies": 16406,
+              "avg_plies": 82.03,
+              "decisive_games": 200,
+              "candidate_win_rate": 0.94
+            }
+          }
+        ],
+        "overall": {
+          "candidate_wins": 758,
+          "baseline_wins": 42,
+          "draws": 0,
+          "max_plies": 0,
+          "games": 800,
+          "total_plies": 66462,
+          "avg_plies": 83.0775,
+          "decisive_games": 800,
+          "candidate_win_rate": 0.9475
+        }
+      },
+      "baseline": {
+        "buckets": [
+          {
+            "seed": 2028,
+            "opening_random_plies": 2,
+            "model_black": {
+              "games": 100,
+              "black_wins": 90,
+              "white_wins": 10,
+              "draws": 0,
+              "max_plies": 0,
+              "total_plies": 8074,
+              "avg_plies": 80.74
+            },
+            "external_black": {
+              "games": 100,
+              "black_wins": 6,
+              "white_wins": 94,
+              "draws": 0,
+              "max_plies": 0,
+              "total_plies": 8196,
+              "avg_plies": 81.96
+            },
+            "score": {
+              "candidate_wins": 184,
+              "baseline_wins": 16,
+              "draws": 0,
+              "max_plies": 0,
+              "games": 200,
+              "total_plies": 16270,
+              "avg_plies": 81.35,
+              "decisive_games": 200,
+              "candidate_win_rate": 0.92
+            }
+          },
+          {
+            "seed": 2029,
+            "opening_random_plies": 2,
+            "model_black": {
+              "games": 100,
+              "black_wins": 97,
+              "white_wins": 3,
+              "draws": 0,
+              "max_plies": 0,
+              "total_plies": 8245,
+              "avg_plies": 82.45
+            },
+            "external_black": {
+              "games": 100,
+              "black_wins": 2,
+              "white_wins": 98,
+              "draws": 0,
+              "max_plies": 0,
+              "total_plies": 8286,
+              "avg_plies": 82.86
+            },
+            "score": {
+              "candidate_wins": 195,
+              "baseline_wins": 5,
+              "draws": 0,
+              "max_plies": 0,
+              "games": 200,
+              "total_plies": 16531,
+              "avg_plies": 82.655,
+              "decisive_games": 200,
+              "candidate_win_rate": 0.975
+            }
+          },
+          {
+            "seed": 2028,
+            "opening_random_plies": 8,
+            "model_black": {
+              "games": 100,
+              "black_wins": 94,
+              "white_wins": 6,
+              "draws": 0,
+              "max_plies": 0,
+              "total_plies": 8576,
+              "avg_plies": 85.76
+            },
+            "external_black": {
+              "games": 100,
+              "black_wins": 3,
+              "white_wins": 97,
+              "draws": 0,
+              "max_plies": 0,
+              "total_plies": 8247,
+              "avg_plies": 82.47
+            },
+            "score": {
+              "candidate_wins": 191,
+              "baseline_wins": 9,
+              "draws": 0,
+              "max_plies": 0,
+              "games": 200,
+              "total_plies": 16823,
+              "avg_plies": 84.115,
+              "decisive_games": 200,
+              "candidate_win_rate": 0.955
+            }
+          },
+          {
+            "seed": 2029,
+            "opening_random_plies": 8,
+            "model_black": {
+              "games": 100,
+              "black_wins": 88,
+              "white_wins": 12,
+              "draws": 0,
+              "max_plies": 0,
+              "total_plies": 8496,
+              "avg_plies": 84.96
+            },
+            "external_black": {
+              "games": 100,
+              "black_wins": 7,
+              "white_wins": 93,
+              "draws": 0,
+              "max_plies": 0,
+              "total_plies": 8421,
+              "avg_plies": 84.21
+            },
+            "score": {
+              "candidate_wins": 181,
+              "baseline_wins": 19,
+              "draws": 0,
+              "max_plies": 0,
+              "games": 200,
+              "total_plies": 16917,
+              "avg_plies": 84.585,
+              "decisive_games": 200,
+              "candidate_win_rate": 0.905
+            }
+          }
+        ],
+        "overall": {
+          "candidate_wins": 751,
+          "baseline_wins": 49,
+          "draws": 0,
+          "max_plies": 0,
+          "games": 800,
+          "total_plies": 66541,
+          "avg_plies": 83.17625,
+          "decisive_games": 800,
+          "candidate_win_rate": 0.93875
+        }
+      },
+      "delta": {
+        "wins": 7,
+        "losses": -7,
+        "win_rate": 0.008750000000000036
+      }
+    }
+  },
+  "warnings": []
+}

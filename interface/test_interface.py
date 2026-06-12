@@ -26,6 +26,20 @@ class DraughtsInterfaceTests(unittest.TestCase):
         self.assertEqual(observation["squares"][20], 1)
         self.assertGreater(observation["legal_move_count"], 0)
 
+    def test_set_state_refreshes_legal_moves(self):
+        env = DraughtsEnv()
+        squares = [0] * 50
+        squares[15] = 1
+        squares[25] = 3
+
+        observation = env.set_state(squares, 0)
+        moves = env.legal_moves()
+
+        self.assertEqual(observation["side_to_move_name"], "black")
+        self.assertEqual(observation["squares"], squares)
+        self.assertEqual(observation["legal_move_count"], len(moves))
+        self.assertGreater(len(moves), 0)
+
     def test_invalid_action_raises(self):
         env = DraughtsEnv()
 

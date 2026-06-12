@@ -2,13 +2,14 @@
 # 该训练器读取 trainer/rl_selfplay.py 生成的探索样本，并从 --resume checkpoint 更新 candidate。
 
 # 本次训练轮数；建议先短训练再用 arena 评测 candidate。
-epochs: 2
+epochs: 1
 
 # 每个 batch 的样本数；CPU 内存紧张时可调小。
 batch_size: 64
 
-# Adam 学习率。RL 更新噪声高于监督学习，默认比监督训练保守。
-learning_rate: 0.0001
+# Adam 学习率。RL 更新噪声高于监督学习；当前默认采用更保守设置，
+# 用更慢的参数变化换取 candidate 对基座的稳定小幅改进。
+learning_rate: 0.00005
 
 # Actor 策略损失在总损失中的权重。
 policy_loss_weight: 1.0
@@ -20,10 +21,12 @@ value_loss_weight: 0.5
 entropy_weight: 0.0
 
 # Advantage 裁剪绝对值；0 表示不裁剪。
-advantage_clip: 2.0
+# 较小的裁剪值会降低单个极端胜负样本对策略更新的影响。
+advantage_clip: 1.5
 
-# PPO 策略概率比值裁剪宽度；0.2 表示 ratio 主要限制在 [0.8, 1.2]。
-ppo_clip_epsilon: 0.2
+# PPO 策略概率比值裁剪宽度；0.1 表示 ratio 主要限制在 [0.9, 1.1]。
+# 该值越小，单轮策略偏离生成数据时行为策略的幅度越小。
+ppo_clip_epsilon: 0.1
 
 # 验证集比例；验证集只评估当前 RL loss，不参与参数更新。
 validation_split: 0.1

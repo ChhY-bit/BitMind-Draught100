@@ -9,6 +9,7 @@ trainer/
   env.py
   agents.py
   arena.py
+  compare_checkpoints.py
   selfplay.py
   rl_selfplay.py
   inspect_dataset.py
@@ -18,8 +19,10 @@ trainer/
   train_supervised.py
   train_selfplay.py
   config/arena.yaml
+  config/compare.yaml
   config/material.yaml
   config/alphabeta.yaml
+  config/value_search.yaml
   config/selfplay.yaml
   config/rl_selfplay.yaml
   config/model.yaml
@@ -30,6 +33,7 @@ trainer/
     test_env.py
     test_agents.py
     test_arena.py
+    test_compare_checkpoints.py
     test_selfplay.py
     test_rl_selfplay.py
     test_inspect_dataset.py
@@ -45,6 +49,7 @@ trainer/
 - `env.py`：标准化训练环境 `StandardDraughtsEnv`。
 - `agents.py`：基础 agent。
 - `arena.py`：批量对战评测器。
+- `compare_checkpoints.py`：自动 checkpoint 晋升评测器，支持多 seed、多 opening、换边和外部基线。
 - `selfplay.py`：对局数据生成器，保存 JSONL 训练样本。
 - `rl_selfplay.py`：训练专用 RL 自博弈生成器，按 temperature 从 checkpoint policy 中采样。
 - `inspect_dataset.py`：JSONL 数据检查器。
@@ -54,15 +59,17 @@ trainer/
 - `train_supervised.py`：监督学习训练脚本，读取 JSONL 数据训练 `CandidateMoveNet`。
 - `train_selfplay.py`：第一版 Actor-Critic 风格 RL 训练脚本，读取 RL self-play JSONL 更新 candidate。
 - `config/arena.yaml`：arena 批量评测与随机 opening 参数。
+- `config/compare.yaml`：checkpoint 自动评测参数。
 - `config/material.yaml`：`MaterialAgent` 的材料评估参数。
 - `config/alphabeta.yaml`：`AlphaBetaAgent` 的搜索深度和增强评估参数。
+- `config/value_search.yaml`：`ValueSearchAgent` 的浅层神经网络搜索参数。
 - `config/selfplay.yaml`：selfplay 数据生成参数。
 - `config/rl_selfplay.yaml`：RL 自博弈探索采样参数。
 - `config/model.yaml`：`CandidateMoveNet` 的网络结构参数。
 - `config/supervised.yaml`：监督学习训练参数。
 - `config/rl_train.yaml`：RL self-play candidate 训练参数。
 - `config/data_sources.yaml`：监督训练数据源权重配置示例。
-- `tests/`：训练环境、agent、arena、selfplay、RL self-play、数据检查器、动作编码器、数据读取器、模型、监督训练和 RL 训练测试。
+- `tests/`：训练环境、agent、arena、自动 checkpoint 对比、selfplay、RL self-play、数据检查器、动作编码器、数据读取器、模型、监督训练和 RL 训练测试。
 - `README-trainer.md`：本文档。
 - `README-network.md`：神经网络组件与动作编码设计记录。
 
@@ -214,7 +221,7 @@ mask[9..511] = 0
 
 ## 基础 Agent
 
-当前已有五个 agent：
+当前已有六个 agent：
 
 | 名称 | 命令行名称 | 行为 |
 | --- | --- | --- |
@@ -223,6 +230,7 @@ mask[9..511] = 0
 | `MaterialAgent` | `material` | 克隆环境并逐个试走候选动作，选择走后材料分最高的动作。 |
 | `AlphaBetaAgent` | `alphabeta` | 使用 Alpha-Beta 搜索模拟未来若干步，叶子局面用可配置增强评估函数打分。 |
 | `SupervisedAgent` | `supervised` | 加载监督学习 checkpoint，对当前所有合法候选动作打分并选择分数最高者。 |
+| `ValueSearchAgent` | `valuesearch` | 加载 checkpoint，模拟候选动作后的局面，用 `value_head` 做浅层 minimax 估值。 |
 
 示例：
 
@@ -238,6 +246,45 @@ actions = env.legal_actions()
 agent = MaterialAgent(seed=1)
 action_id = agent.select_action(raw, actions, env)
 obs, reward, done, info = env.step(action_id)
+```
+
+### ValueSearchAgent
+
+`ValueSearchAgent` 是当前“神经网络 + 搜索”的最小版本。它不改变 C 引擎，也不改变网络结构，只是在 Python 侧做浅层推演：
+
+```text
+枚举当前合法动作
+-> clone 环境并执行候选动作
+-> 若终局，直接按胜负给 -1/1
+-> 否则用 checkpoint 的 value_head 评估走后局面
+-> depth>1 时继续按当前方最大化、对手最小化做浅层 minimax
+```
+
+配置文件：
+
+```text
+trainer/config/value_search.yaml
+```
+
+关键参数：
+
+| 参数 | 说明 |
+| --- | --- |
+| `search_depth` | 搜索半回合深度。默认 `1`，先只看当前走后局面。 |
+| `top_k` | 每个节点只保留 policy score 最高的前 K 个动作；`0` 表示不裁剪。 |
+| `terminal_value` | 搜索到胜负终局时使用的价值幅度，默认与 value head 的 `[-1,1]` 一致。 |
+
+快速评测命令：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/arena.py \
+  --black valuesearch \
+  --white supervised \
+  --black-checkpoint trainer/checkpoints/candidate_move_net_rl_best.pt \
+  --white-checkpoint trainer/checkpoints/candidate_move_net_rl_best.pt \
+  --games 50 \
+  --opening-random-plies 4 \
+  --device cpu
 ```
 
 这些 agent 的目的不是达到高水平，而是作为后续搜索、模型和强化学习的评测基线。
@@ -431,7 +478,109 @@ PYTHONPATH=interface:trainer python3 trainer/arena.py \
 - opening 半回合计入该局 `--max-plies` 和 `avg_plies`。
 - opening 阶段可能触发强制吃子或提前终局；仍按正常引擎规则处理。
 
-第一版 arena 只让每局 opening 多样化，还没有自动做“同一 opening 换边”的 paired checkpoint 晋升评测。比较相近 candidate 与 base 时，仍应手动黑白换边，并结合对 AlphaBeta/material 的结果判断。
+`arena.py` 只负责单组对战；比较相近 candidate 与 base 时，建议优先使用下面的 `compare_checkpoints.py` 做自动换边汇总。
+
+## 自动 Checkpoint 对比
+
+`compare_checkpoints.py` 用于自动完成每轮 RL candidate 的晋升评测。它会复用 `arena.run_arena()`，对同一组 seed 和 opening depth 自动跑：
+
+```text
+candidate 黑 vs baseline 白
+baseline 黑 vs candidate 白
+```
+
+并按 candidate / baseline 视角汇总胜负。
+
+基本命令：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/compare_checkpoints.py \
+  --candidate trainer/checkpoints/candidate_move_net_rl_best.pt \
+  --baseline trainer/checkpoints/candidate_move_net_rl_iter_003_best.pt \
+  --preset quick \
+  --report reports/compare_iter_004.json \
+  --device cpu
+```
+
+评测预设：
+
+| 预设 | 用途 | 特点 |
+| --- | --- | --- |
+| `quick` | 快速筛掉明显退步的候选模型 | 只跑 candidate vs baseline，不跑外部 agent，速度最快。 |
+| `standard` | 常规晋级初筛 | 跑 candidate vs baseline，并用 `material` 做快速参考。 |
+| `full` | 昂贵的最终确认 | 在 `standard` 基础上额外跑 `alphabeta`，耗时明显更长。 |
+| `alphabeta` | 单独检查强基准退化 | 只少量跑 `alphabeta` 外部参考。 |
+
+建议日常先用：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/compare_checkpoints.py \
+  --candidate trainer/checkpoints/rl_iter_next/candidate_move_net_rl_latest.pt \
+  --baseline trainer/checkpoints/candidate_move_net_rl_best.pt \
+  --preset quick \
+  --device cpu
+```
+
+如果 `quick` 显示候选模型接近或超过晋级线，再跑：
+
+```bash
+PYTHONPATH=interface:trainer python3 trainer/compare_checkpoints.py \
+  --candidate trainer/checkpoints/rl_iter_next/candidate_move_net_rl_latest.pt \
+  --baseline trainer/checkpoints/candidate_move_net_rl_best.pt \
+  --preset standard \
+  --report reports/compare_rl_iter_next_standard.json \
+  --device cpu
+```
+
+只有候选模型在 `standard` 中看起来值得晋级时，才建议用 `--preset full` 或显式 `--external-agents alphabeta` 做慢速确认。
+
+默认配置文件：
+
+```text
+trainer/config/compare.yaml
+```
+
+常用参数：
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--candidate` | 必填 | 待评测的新 checkpoint。 |
+| `--baseline` | 必填 | 当前基座 checkpoint。 |
+| `--preset` | `custom` | 快速评测预设。可选 `quick`、`standard`、`full`、`alphabeta`。 |
+| `--games` | `100` | 每个方向、每个 seed/opening 组合的局数。 |
+| `--seeds` | 配置文件控制 | 多个 opening 随机种子。 |
+| `--opening-random-plies` | 配置文件控制 | 多个随机 opening 半回合数。 |
+| `--external-agents` | `material` | 外部参考 agent。可写 `random,greedy,material,alphabeta`；AlphaBeta 很慢，默认不跑。 |
+| `--report` | `none` | JSON 报告输出路径。 |
+
+输出分为两部分：
+
+- **main**：candidate vs baseline，是晋升判断核心。
+- **external**：candidate 和 baseline 分别对 random/greedy/material/alphabeta 等外部 agent 的参考结果，只作为风险提示。
+
+第一版晋升建议规则：
+
+```text
+overall decisive win rate >= promote_threshold
+并且没有任何 seed/opening bucket 低于 bucket_floor
+=> promote
+
+overall decisive win rate < reject_threshold
+=> reject
+
+其他情况
+=> inconclusive
+```
+
+默认：
+
+```text
+promote_threshold = 0.53
+reject_threshold  = 0.50
+bucket_floor      = 0.45
+```
+
+注意：外部 agent 结果不会直接和 candidate/base 主胜率混合。它们用于发现 candidate 是否虽然打赢上一代，但对 AlphaBeta/material 等外部基线掉档。
 
 可以用它做基线比较：
 
@@ -1020,8 +1169,18 @@ trainer/config/rl_train.yaml
 | `value_loss_weight` | Critic 价值损失权重。 |
 | `entropy_weight` | 熵奖励权重；总损失中以减号加入。 |
 | `advantage_clip` | Advantage 绝对值裁剪；`0` 表示不裁剪。 |
-| `ppo_clip_epsilon` | PPO ratio 裁剪宽度；`0.2` 对应主要限制在 `[0.8, 1.2]`。 |
+| `ppo_clip_epsilon` | PPO ratio 裁剪宽度；当前稳定默认 `0.1` 对应主要限制在 `[0.9, 1.1]`。 |
 | `validation_split` | RL 验证集比例。 |
+
+当前 `trainer/config/rl_train.yaml` 采用偏稳定的默认参数：
+
+```yaml
+learning_rate: 0.00005
+advantage_clip: 1.5
+ppo_clip_epsilon: 0.1
+```
+
+这组参数会让单轮 PPO 更新更慢，但更不容易把已经通过评测的基座模型推坏。若连续多轮 candidate 都明显落后，可以继续降低 `learning_rate`；若多轮都只是小幅接近但无法超过基座，可以考虑在充分备份后略微提高 `epochs` 或恢复稍大的 `ppo_clip_epsilon`。
 
 训练时会打印：
 
@@ -1034,7 +1193,7 @@ value_mae
 elapsed / cumulative_train_time
 ```
 
-`policy_loss` 允许为负值，单独看它不能代表棋力提升。`ratio` 接近 `1` 表示 candidate 仍靠近生成数据时的行为策略，`clip_fraction` 过高表示大量样本已经撞到 PPO 限制。训练结束后必须用 `arena.py` 至少评测 candidate 与基座 checkpoint、AlphaBeta 的黑白换边对局。
+`policy_loss` 允许为负值，单独看它不能代表棋力提升。`ratio` 接近 `1` 表示 candidate 仍靠近生成数据时的行为策略，`clip_fraction` 过高表示大量样本已经撞到 PPO 限制。训练结束后优先用 `compare_checkpoints.py --preset quick` 快速筛选，再按需要升级到 `standard` 或 `full`。
 
 默认保存：
 

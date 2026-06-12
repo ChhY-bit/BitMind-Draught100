@@ -57,6 +57,11 @@ class StandardDraughtsEnv:
         self._action_history = []
         return self.observation()
 
+    def set_state(self, squares: List[int], side_to_move: int) -> Observation:
+        self._last_observation_dict = self._env.set_state(squares, side_to_move)
+        self._action_history = []
+        return self.observation()
+
     def observation(self) -> Observation:
         self._last_observation_dict = self._env.observation()
         return encode_observation(self._last_observation_dict)

@@ -43,6 +43,18 @@ int draughts_env_reset(DraughtsEnvHandle *env, DraughtsObservation *observation)
 int draughts_env_copy(DraughtsEnvHandle *dst, const DraughtsEnvHandle *src);
 
 /*
+ * Input: env points to writable environment storage, squares has 50 piece values,
+ * side_to_move is the side to act, observation may be NULL.
+ * Output: replaces the environment state and refreshes cached legal moves.
+ */
+int draughts_env_set_state(
+    DraughtsEnvHandle *env,
+    const unsigned char squares[DRAUGHTS_SQUARE_COUNT],
+    unsigned char side_to_move,
+    DraughtsObservation *observation
+);
+
+/*
  * Input: env points to a current environment, observation points to writable storage.
  * Output: copies a compact observation from the C environment.
  */

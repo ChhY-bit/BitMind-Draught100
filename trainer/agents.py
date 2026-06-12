@@ -13,6 +13,8 @@ from move_encoding import encode_legal_moves
 
 DEFAULT_MATERIAL_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "material.yaml"
 DEFAULT_ALPHABETA_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "alphabeta.yaml"
+DEFAULT_ALPHABETA_PLUS_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "alphabeta_plus.yaml"
+DEFAULT_VALUE_SEARCH_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "value_search.yaml"
 
 BLACK_WIN = 1
 WHITE_WIN = 2
@@ -110,6 +112,13 @@ class AlphaBetaConfig:
             win_value=self.win_value,
             draw_value=self.draw_value,
         )
+
+
+@dataclass
+class ValueSearchConfig:
+    search_depth: int = 1
+    top_k: int = 0
+    terminal_value: int = 1
 
 
 @dataclass
@@ -235,6 +244,19 @@ class AlphaBetaAgent(Agent):
 
 
 @dataclass
+class AlphaBetaPlusAgent(AlphaBetaAgent):
+    seed: Optional[int] = None
+    config_path: Optional[str] = None
+    name: str = "alphabeta_plus"
+
+    def __post_init__(self) -> None:
+        self._rng = random.Random(self.seed)
+        config_path = self.config_path or str(DEFAULT_ALPHABETA_PLUS_CONFIG_PATH)
+        self.config = load_alphabeta_config(config_path)
+        self.material_config = self.config.material_config()
+
+
+@dataclass
 class SupervisedAgent(Agent):
     checkpoint_path: str
     device: Optional[str] = None
@@ -280,6 +302,127 @@ class SupervisedAgent(Agent):
             output = self.model(observation_tensor, move_tensor, move_mask)
             selected_index = int(output["policy_logits"][0].argmax().item())
         return legal_actions[selected_index].action_id
+
+
+@dataclass
+class ValueSearchAgent(Agent):
+    checkpoint_path: str
+    seed: Optional[int] = None
+    config_path: Optional[str] = None
+    device: Optional[str] = None
+    name: str = "valuesearch"
+
+    def __post_init__(self) -> None:
+        if not self.checkpoint_path:
+            raise ValueError("ValueSearchAgent requires a checkpoint path")
+        self._rng = random.Random(self.seed)
+        self.config = load_value_search_config(self.config_path)
+        self.device_obj = torch.device(
+            self.device if self.device else ("cuda" if torch.cuda.is_available() else "cpu")
+        )
+        checkpoint = torch.load(self.checkpoint_path, map_location=self.device_obj)
+        model_config = load_model_config_from_checkpoint(checkpoint)
+        self.model = CandidateMoveNet(config=model_config).to(self.device_obj)
+        state_dict = checkpoint.get("model_state_dict", checkpoint)
+        self.model.load_state_dict(state_dict)
+        self.model.eval()
+
+    def select_action(
+        self,
+        observation: Dict[str, object],
+        legal_actions: Sequence[Move],
+        env=None,
+    ) -> int:
+        if not legal_actions:
+            raise ValueError("ValueSearchAgent received no legal actions")
+        if env is None:
+            raise ValueError("ValueSearchAgent requires an environment with clone() and observation()")
+
+        root_side = int(observation["side_to_move"])
+        scored_moves = []
+        ordered_actions = self._ordered_moves(env, observation, legal_actions)
+        for move in ordered_actions:
+            cloned = env.clone()
+            cloned.step(move.action_id)
+            score = self._search(cloned, self.config.search_depth - 1, root_side)
+            scored_moves.append((score, move))
+
+        best_score = max(score for score, _move in scored_moves)
+        candidates = [move for score, move in scored_moves if score == best_score]
+        return self._rng.choice(candidates).action_id
+
+    def _search(self, env, depth: int, root_side: int) -> float:
+        observation = env.raw_observation()
+        result = int(observation["game_result"])
+        if depth <= 0 or result != ONGOING:
+            return self._evaluate_env(env, observation, root_side)
+
+        legal_actions = env.legal_actions()
+        if not legal_actions:
+            return self._evaluate_env(env, observation, root_side)
+
+        side_to_move = int(observation["side_to_move"])
+        ordered_actions = self._ordered_moves(env, observation, legal_actions)
+        values = []
+        for move in ordered_actions:
+            cloned = env.clone()
+            cloned.step(move.action_id)
+            values.append(self._search(cloned, depth - 1, root_side))
+
+        return max(values) if side_to_move == root_side else min(values)
+
+    def _evaluate_env(self, env, observation: Dict[str, object], root_side: int) -> float:
+        result = int(observation["game_result"])
+        if result == BLACK_WIN:
+            return float(self.config.terminal_value if root_side == 0 else -self.config.terminal_value)
+        if result == WHITE_WIN:
+            return float(self.config.terminal_value if root_side == 1 else -self.config.terminal_value)
+        if result == DRAW:
+            return 0.0
+
+        with torch.no_grad():
+            observation_tensor = torch.tensor(
+                [env.observation()],
+                dtype=torch.float32,
+                device=self.device_obj,
+            )
+            board_feature = self.model.board_encoder(observation_tensor)
+            value = float(self.model.value_head(board_feature).squeeze(-1)[0].item())
+
+        side_to_move = int(observation["side_to_move"])
+        return value if side_to_move == root_side else -value
+
+    def _ordered_moves(
+        self,
+        env,
+        observation: Dict[str, object],
+        legal_actions: Sequence[Move],
+    ) -> List[Move]:
+        if self.config.top_k <= 0 or len(legal_actions) <= self.config.top_k:
+            return list(legal_actions)
+
+        move_dicts = [move_to_dict(move) for move in legal_actions]
+        with torch.no_grad():
+            observation_tensor = torch.tensor(
+                [env.observation()],
+                dtype=torch.float32,
+                device=self.device_obj,
+            )
+            move_tensor = torch.tensor(
+                [encode_legal_moves(move_dicts, side_to_move=int(observation["side_to_move"]))],
+                dtype=torch.float32,
+                device=self.device_obj,
+            )
+            move_mask = torch.ones((1, len(legal_actions)), dtype=torch.float32, device=self.device_obj)
+            output = self.model(observation_tensor, move_tensor, move_mask)
+            logits = output["policy_logits"][0].detach().cpu().tolist()
+
+        scored = sorted(
+            zip(logits, legal_actions),
+            key=lambda item: (item[0], len(item[1].captures), promotion_score(item[1], observation)),
+            reverse=True,
+        )
+        return [move for _logit, move in scored[: self.config.top_k]]
 
 
 def load_model_config_from_checkpoint(checkpoint: object) -> ModelConfig:
@@ -464,6 +607,28 @@ def load_alphabeta_config(config_path: Optional[str] = None) -> AlphaBetaConfig:
     return config
 
 
+def load_value_search_config(config_path: Optional[str] = None) -> ValueSearchConfig:
+    path = Path(config_path) if config_path is not None else DEFAULT_VALUE_SEARCH_CONFIG_PATH
+    default_config = ValueSearchConfig()
+    values = load_integer_yaml(
+        path,
+        {
+            "search_depth": default_config.search_depth,
+            "top_k": default_config.top_k,
+            "terminal_value": default_config.terminal_value,
+        },
+        "value_search",
+    )
+    config = ValueSearchConfig(**values)
+    if config.search_depth <= 0:
+        raise ValueError("value_search search_depth must be positive")
+    if config.top_k < 0:
+        raise ValueError("value_search top_k must be non-negative")
+    if config.terminal_value <= 0:
+        raise ValueError("value_search terminal_value must be positive")
+    return config
+
+
 def load_integer_yaml(path: Path, defaults: Dict[str, int], config_name: str) -> Dict[str, int]:
     values = {key: value for key, value in defaults.items()}
 
@@ -504,6 +669,7 @@ def make_agent(
     seed: Optional[int] = None,
     material_config_path: Optional[str] = None,
     alphabeta_config_path: Optional[str] = None,
+    value_search_config_path: Optional[str] = None,
     supervised_checkpoint_path: Optional[str] = None,
     device: Optional[str] = None,
 ) -> Agent:
@@ -516,6 +682,17 @@ def make_agent(
         return MaterialAgent(seed=seed, config_path=material_config_path)
     if normalized in {"alphabeta", "alpha-beta", "ab"}:
         return AlphaBetaAgent(seed=seed, config_path=alphabeta_config_path)
+    if normalized in {"alphabeta_plus", "alphabeta-plus", "abplus", "ab+"}:
+        return AlphaBetaPlusAgent(seed=seed, config_path=alphabeta_config_path)
+    if normalized in {"valuesearch", "value-search", "value_search", "vs"}:
+        if supervised_checkpoint_path is None:
+            raise ValueError("valuesearch agent requires a checkpoint path")
+        return ValueSearchAgent(
+            checkpoint_path=supervised_checkpoint_path,
+            seed=seed,
+            config_path=value_search_config_path,
+            device=device,
+        )
     if normalized in {"supervised", "supervised-agent", "sl"}:
         if supervised_checkpoint_path is None:
             raise ValueError("supervised agent requires a checkpoint path")
@@ -524,4 +701,12 @@ def make_agent(
 
 
 def available_agents() -> List[str]:
-    return ["random", "greedy", "material", "alphabeta", "supervised"]
+    return [
+        "random",
+        "greedy",
+        "material",
+        "alphabeta",
+        "alphabeta_plus",
+        "supervised",
+        "valuesearch",
+    ]
