@@ -13,6 +13,7 @@ from trainer.train_supervised import (
     load_supervised_config,
     main,
     parse_data_source_arg,
+    soft_cross_entropy,
     split_indices,
 )
 
@@ -90,6 +91,89 @@ class TrainSupervisedTests(unittest.TestCase):
         self.assertLess(policy_loss.item(), 0.2)
         self.assertAlmostEqual(value_loss.item(), 1.0, places=5)
         self.assertAlmostEqual(loss.item(), policy_loss.item() + 0.5, places=5)
+
+    def test_compute_loss_with_soft_targets(self):
+        output = {
+            "policy_logits": torch.tensor([[2.0, 1.0], [0.5, 2.0]], requires_grad=True),
+            "value": torch.tensor([0.0, 0.0], requires_grad=True),
+        }
+        batch = {
+            "policy_target_index": torch.tensor([0, 1]),
+            "policy_target_probs": torch.tensor([[0.9, 0.1], [0.3, 0.7]]),
+            "move_mask": torch.tensor([[1.0, 1.0], [1.0, 1.0]]),
+            "value_target": torch.tensor([1.0, -1.0]),
+            "policy_weight": torch.tensor([1.0, 1.0]),
+            "value_weight": torch.tensor([1.0, 1.0]),
+        }
+
+        loss, policy_loss, value_loss = compute_loss(output, batch, value_loss_weight=0.25)
+
+        # Soft CE loss should be lower when model matches the distribution.
+        self.assertGreater(policy_loss.item(), 0.0)
+        # Hard-label accuracy check: argmax should still match.
+        predictions = output["policy_logits"].argmax(dim=1)
+        self.assertEqual(predictions[0].item(), 0)
+        self.assertEqual(predictions[1].item(), 1)
+
+    def test_soft_cross_entropy_matches_hard_label_when_onehot(self):
+        logits = torch.tensor([[3.0, 1.0, 0.0], [0.0, 0.0, 3.0]])
+        # One-hot targets.
+        target_probs = torch.tensor([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+        move_mask = torch.tensor([[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]])
+
+        soft_loss = soft_cross_entropy(logits, target_probs, move_mask)
+        hard_loss = torch.nn.functional.cross_entropy(
+            logits, torch.tensor([0, 2]), reduction="none"
+        )
+
+        torch.testing.assert_close(soft_loss, hard_loss)
+
+    def test_soft_cross_entropy_masks_padded_positions(self):
+        # Real scenario: model forward() already fills padded positions
+        # with MASKED_LOGIT (-1e9), and target_probs are 0 there.
+        MASKED_LOGIT = -1.0e9
+        logits = torch.tensor([[3.0, float(MASKED_LOGIT)]])
+        target_probs = torch.tensor([[0.8, 0.0]])  # padded probs = 0
+        move_mask = torch.tensor([[1.0, 0.0]])
+
+        loss = soft_cross_entropy(logits, target_probs, move_mask)
+
+        # After softmax([3.0, -1e9]), the padded position gets ~0 probability.
+        # loss ≈ -(0.8 * log_softmax(3.0) + 0.0 * log_softmax(-1e9))
+        # log_softmax(3.0) ≈ 0.0 (since exp(3) dominates)
+        self.assertLess(loss.item(), 0.01)
+
+    def test_soft_cross_entropy_ignores_padded_target_probs(self):
+        # When target_probs for a padded position is accidentally non-zero
+        # (shouldn't happen in production, but safety net kicks in).
+        MASKED_LOGIT = -1.0e9
+        logits = torch.tensor([[3.0, float(MASKED_LOGIT)]])
+        # target_probs has 0.2 at padded position — would give NaN without masking.
+        target_probs = torch.tensor([[0.8, 0.2]])
+        move_mask = torch.tensor([[1.0, 0.0]])
+
+        loss = soft_cross_entropy(logits, target_probs, move_mask)
+
+        # safe_log_probs zeros out the padded position's -inf/-large log_prob,
+        # so 0.2 * 0 = 0 for that entry. Loss ≈ 0.
+        self.assertLess(loss.item(), 0.01)
+
+    def test_compute_loss_falls_back_to_hard_label_without_soft_targets(self):
+        output = {
+            "policy_logits": torch.tensor([[2.0, 0.0]], requires_grad=True),
+            "value": torch.tensor([0.0], requires_grad=True),
+        }
+        batch = {
+            "policy_target_index": torch.tensor([0]),
+            "value_target": torch.tensor([1.0]),
+            "policy_weight": torch.tensor([1.0]),
+            "value_weight": torch.tensor([1.0]),
+        }
+
+        loss, policy_loss, value_loss = compute_loss(output, batch, value_loss_weight=0.25)
+
+        self.assertGreater(loss.item(), 0.0)
+        self.assertAlmostEqual(policy_loss.item(), 0.1269, places=3)
 
     def test_supervised_training_writes_checkpoints_and_time_log(self):
         with TemporaryDirectory() as tmp_dir:

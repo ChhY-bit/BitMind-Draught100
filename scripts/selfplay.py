@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -29,6 +30,7 @@ class SelfPlayConfig:
     output: str = "data/selfplay.jsonl"
     log_interval: int = 1
     seed: int = 1
+    opening_random_plies: int = 6
     material_config: Optional[str] = None
     alphabeta_config: Optional[str] = None
     black_checkpoint: Optional[str] = None
@@ -83,6 +85,7 @@ def generate_dataset(
     device: Optional[str] = None,
     append: bool = False,
     auto_output_name: bool = False,
+    opening_random_plies: int = 0,
 ) -> SelfPlayStats:
     if games <= 0:
         raise ValueError("games must be positive")
@@ -90,6 +93,8 @@ def generate_dataset(
         raise ValueError("max_plies must be positive")
     if log_interval <= 0:
         raise ValueError("log_interval must be positive")
+    if opening_random_plies < 0:
+        raise ValueError("opening_random_plies must be non-negative")
 
     black_agent = make_agent(
         black_name,
@@ -118,6 +123,7 @@ def generate_dataset(
     file_mode = "a" if append else "w"
     stats = SelfPlayStats()
     start = time.perf_counter()
+    opening_rng = random.Random(seed) if opening_random_plies > 0 else None
 
     print(
         f"selfplay: black={black_agent.name} white={white_agent.name} "
@@ -126,7 +132,8 @@ def generate_dataset(
         f"material_config={material_config_path or 'default'} "
         f"alphabeta_config={alphabeta_config_path or 'default'} "
         f"black_checkpoint={black_checkpoint_path or 'none'} "
-        f"white_checkpoint={white_checkpoint_path or 'none'}"
+        f"white_checkpoint={white_checkpoint_path or 'none'} "
+        f"opening_random_plies={opening_random_plies}"
     )
 
     with output.open(file_mode, encoding="utf-8") as handle:
@@ -137,6 +144,8 @@ def generate_dataset(
                 black_agent=black_agent,
                 white_agent=white_agent,
                 max_plies=max_plies,
+                opening_random_plies=opening_random_plies,
+                opening_rng=opening_rng,
             )
             for sample in finalize_samples(samples, game_result, maxed):
                 handle.write(json.dumps(sample, ensure_ascii=False, separators=(",", ":")))
@@ -197,12 +206,28 @@ def play_and_collect_game(
     black_agent: Agent,
     white_agent: Agent,
     max_plies: int,
+    opening_random_plies: int = 0,
+    opening_rng: Optional[random.Random] = None,
 ) -> tuple[List[Dict[str, object]], int, int, bool]:
+    if opening_random_plies < 0:
+        raise ValueError("opening_random_plies must be non-negative")
+    if opening_random_plies > 0 and opening_rng is None:
+        raise ValueError("opening_rng is required when opening_random_plies is positive")
+
     env = StandardDraughtsEnv()
     env.reset()
     samples: List[Dict[str, object]] = []
 
-    for ply in range(max_plies):
+    # Phase 1: random opening moves (not recorded as training samples).
+    plies, opening_done = apply_random_opening(
+        env, opening_random_plies, max_plies, opening_rng
+    )
+    if opening_done:
+        raw = env.raw_observation()
+        return samples, int(raw["game_result"]), plies, opening_done
+
+    # Phase 2: agent-driven play (recorded as training samples).
+    for ply in range(plies, max_plies):
         raw = env.raw_observation()
         if raw["game_result_name"] != "ongoing":
             return samples, int(raw["game_result"]), ply, False
@@ -232,6 +257,33 @@ def play_and_collect_game(
 
     raw = env.raw_observation()
     return samples, int(raw["game_result"]), max_plies, True
+
+
+def apply_random_opening(
+    env: StandardDraughtsEnv,
+    opening_random_plies: int,
+    max_plies: int,
+    rng: Optional[random.Random],
+) -> tuple[int, bool]:
+    """Advance a few random moves before the evaluated agents take over.
+
+    These random moves are NOT recorded as training samples — they only
+    serve to diversify the starting position so that deterministic agents
+    (e.g. AlphaBeta) produce varied games.
+    """
+    plies = 0
+    while plies < opening_random_plies and plies < max_plies:
+        raw = env.raw_observation()
+        if raw["game_result_name"] != "ongoing":
+            return plies, True
+        legal_actions = env.legal_actions()
+        if not legal_actions:
+            return plies, True
+        if rng is None:
+            raise ValueError("opening rng is required for random opening moves")
+        env.step(rng.choice(legal_actions).action_id)
+        plies += 1
+    return plies, plies >= max_plies
 
 
 def build_sample(
@@ -315,6 +367,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-interval", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument(
+        "--opening-random-plies",
+        type=int,
+        default=None,
+        help="Play N random moves before agents take over. "
+        "Essential for deterministic agents like AlphaBeta to produce varied games.",
+    )
+    parser.add_argument(
         "--material-config",
         default=None,
         help="YAML file for MaterialAgent parameters.",
@@ -380,6 +439,7 @@ def merge_selfplay_args(cli_args: argparse.Namespace) -> argparse.Namespace:
         "output": cli_args.output,
         "log_interval": cli_args.log_interval,
         "seed": cli_args.seed,
+        "opening_random_plies": cli_args.opening_random_plies,
         "material_config": cli_args.material_config,
         "alphabeta_config": cli_args.alphabeta_config,
         "black_checkpoint": cli_args.black_checkpoint,
@@ -460,6 +520,8 @@ def validate_selfplay_config(config: SelfPlayConfig) -> None:
         raise ValueError("selfplay append must be 0 or 1")
     if config.auto_output_name not in {0, 1}:
         raise ValueError("selfplay auto_output_name must be 0 or 1")
+    if config.opening_random_plies < 0:
+        raise ValueError("selfplay opening_random_plies must be non-negative")
     if config.append and config.auto_output_name:
         raise ValueError("selfplay append and auto_output_name cannot both be enabled")
 
@@ -481,6 +543,7 @@ def main() -> None:
         device=args.device,
         append=args.append,
         auto_output_name=args.auto_output_name,
+        opening_random_plies=args.opening_random_plies,
     )
 
 

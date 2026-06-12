@@ -122,12 +122,18 @@ def training_item_from_sample(
     legal_moves = sample["legal_moves"]
     selected_move = sample["selected_move"]
     side_to_move = int(sample["side_to_move"])
+    policy_target_probs = sample.get("policy_target_probs")
     return {
         "observation": observation_from_sample(sample),
         "action_mask": sample["action_mask"],
         "policy_target": int(sample["selected_action_id"]),
         "move_features": encode_legal_moves(legal_moves, side_to_move=side_to_move),
         "policy_target_index": selected_move_index(legal_moves, selected_move),
+        "policy_target_probs": (
+            [float(p) for p in policy_target_probs]
+            if policy_target_probs is not None
+            else None
+        ),
         "value_target": int(sample["value_target"]),
         "selected_policy_prob": float(sample.get("selected_policy_prob", 1.0)),
         "behavior_temperature": float(sample.get("temperature", 1.0)),
@@ -194,6 +200,21 @@ def validate_training_sample(sample: Dict[str, object], index: int = -1) -> None
         raise ValueError(f"{prefix}selected_move must be an object")
     selected_move_index(legal_moves, selected_move)
 
+    policy_target_probs = sample.get("policy_target_probs")
+    if policy_target_probs is not None:
+        if not isinstance(policy_target_probs, list) or len(policy_target_probs) != len(legal_moves):
+            raise ValueError(
+                f"{prefix}policy_target_probs must be a list with same length as legal_moves"
+            )
+        for prob in policy_target_probs:
+            if not isinstance(prob, (int, float)) or float(prob) < -0.001:
+                raise ValueError(f"{prefix}policy_target_probs values must be non-negative")
+        prob_sum = sum(float(p) for p in policy_target_probs)
+        if prob_sum < 0.99 or prob_sum > 1.01:
+            raise ValueError(
+                f"{prefix}policy_target_probs must sum to ~1.0, got {prob_sum:.6f}"
+            )
+
 
 def has_observation_shape(value: object, shape: tuple[int, int, int]) -> bool:
     channels, rows, cols = shape
@@ -210,6 +231,7 @@ def has_observation_shape(value: object, shape: tuple[int, int, int]) -> bool:
 
 def collate_batch(items: Sequence[Dict[str, object]]) -> Dict[str, object]:
     max_moves = max((len(item["move_features"]) for item in items), default=0)
+    has_soft_targets = any(item.get("policy_target_probs") is not None for item in items)
     return {
         "observation": [item["observation"] for item in items],
         "action_mask": [item["action_mask"] for item in items],
@@ -220,6 +242,14 @@ def collate_batch(items: Sequence[Dict[str, object]]) -> Dict[str, object]:
             for item in items
         ],
         "policy_target_index": [item["policy_target_index"] for item in items],
+        "policy_target_probs": (
+            [
+                pad_probs(item.get("policy_target_probs"), len(item["move_features"]), max_moves)
+                for item in items
+            ]
+            if has_soft_targets
+            else None
+        ),
         "value_target": [item["value_target"] for item in items],
         "selected_policy_prob": [item.get("selected_policy_prob", 1.0) for item in items],
         "behavior_temperature": [item.get("behavior_temperature", 1.0) for item in items],
@@ -236,13 +266,30 @@ def pad_move_features(move_features: Sequence[Sequence[float]], max_moves: int) 
     return padded
 
 
+def pad_probs(
+    probs: Optional[Sequence[float]],
+    num_legal: int,
+    max_moves: int,
+) -> List[float]:
+    """Pad a probability distribution to max_moves, filling with zeros.
+
+    Returns a zero-filled list when probs is None (backward compat with
+    data that has no soft targets).
+    """
+    if probs is None:
+        return [0.0] * max_moves
+    padded = [float(p) for p in probs]
+    padded.extend([0.0] * (max_moves - len(padded)))
+    return padded
+
+
 def to_torch_batch(batch: Dict[str, object]) -> Dict[str, object]:
     try:
         import torch
     except ImportError as exc:
         raise ImportError("PyTorch is required for to_torch_batch()") from exc
 
-    return {
+    result: dict[str, object] = {
         "observation": torch.tensor(batch["observation"], dtype=torch.float32),
         "action_mask": torch.tensor(batch["action_mask"], dtype=torch.float32),
         "policy_target": torch.tensor(batch["policy_target"], dtype=torch.long),
@@ -257,6 +304,11 @@ def to_torch_batch(batch: Dict[str, object]) -> Dict[str, object]:
         "value_weight": torch.tensor(batch["value_weight"], dtype=torch.float32),
         "metadata": batch["metadata"],
     }
+    if batch.get("policy_target_probs") is not None:
+        result["policy_target_probs"] = torch.tensor(
+            batch["policy_target_probs"], dtype=torch.float32
+        )
+    return result
 
 
 def batched(items: Iterable[Dict[str, object]], batch_size: int) -> Iterator[List[Dict[str, object]]]:

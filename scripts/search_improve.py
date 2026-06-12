@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import time
 from dataclasses import dataclass
@@ -34,6 +35,7 @@ def improve_dataset(
     alphabeta_depth: Optional[int] = None,
     min_score_margin: int = 0,
     position_sample_rate: float = 1.0,
+    temperature: float = 100.0,
 ) -> SearchImproveStats:
     if not input_paths:
         raise ValueError("input_paths must not be empty")
@@ -45,6 +47,8 @@ def improve_dataset(
         raise ValueError("min_score_margin must be non-negative")
     if not 0 < position_sample_rate <= 1:
         raise ValueError("position_sample_rate must be in (0, 1]")
+    if temperature <= 0:
+        raise ValueError("temperature must be positive")
 
     rng = random.Random(seed)
     teacher = AlphaBetaAgent(seed=seed, config_path=alphabeta_config_path)
@@ -65,7 +69,8 @@ def improve_dataset(
         f"alphabeta_config={alphabeta_config_path or 'default'} "
         f"alphabeta_depth={teacher.config.search_depth} "
         f"min_score_margin={min_score_margin} "
-        f"position_sample_rate={position_sample_rate:g}",
+        f"position_sample_rate={position_sample_rate:g} "
+        f"temperature={temperature:g}",
         flush=True,
     )
 
@@ -85,6 +90,7 @@ def improve_dataset(
                     teacher,
                     rng,
                     min_score_margin=min_score_margin,
+                    temperature=temperature,
                 )
             except LowConfidencePosition as exc:
                 stats.filtered += 1
@@ -132,6 +138,7 @@ def improve_sample(
     teacher: AlphaBetaAgent,
     rng: random.Random,
     min_score_margin: int = 0,
+    temperature: float = 100.0,
 ) -> Dict[str, object]:
     if "raw_squares" not in sample:
         raise ValueError("missing raw_squares")
@@ -156,6 +163,15 @@ def improve_sample(
             f"search_score_margin {margin} below minimum {min_score_margin}"
         )
 
+    # Convert AlphaBeta scores to soft target probability distribution.
+    scores = [score for score, _move in scored_moves]
+    policy_target_probs = scores_to_probs(scores, temperature)
+    # Build prob map keyed by action_id for deterministic ordering.
+    prob_by_action_id = {
+        move.action_id: prob
+        for (score, move), prob in zip(scored_moves, policy_target_probs)
+    }
+
     improved = dict(sample)
     improved["schema_version"] = sample.get("schema_version", 1)
     improved["side_to_move"] = side_to_move
@@ -168,8 +184,13 @@ def improve_sample(
     improved["action_mask"] = env.action_mask()
     improved["selected_action_id"] = selected_move.action_id
     improved["selected_move"] = move_to_dict(selected_move)
+    # Soft target distribution parallel to legal_moves.
+    improved["policy_target_probs"] = [
+        prob_by_action_id[move.action_id] for move in legal_actions
+    ]
     improved["teacher_agent"] = teacher.name
     improved["teacher_depth"] = teacher.config.search_depth
+    improved["teacher_temperature"] = temperature
     improved["teacher_original_agent"] = sample.get("agent", "unknown")
     improved["teacher_original_selected_action_id"] = sample.get("selected_action_id")
     improved["search_best_score"] = best_score
@@ -215,6 +236,33 @@ def score_margin(scored_moves: Sequence[Tuple[int, Move]]) -> int:
     return scores[0] - scores[1]
 
 
+def scores_to_probs(scores: Sequence[int], temperature: float) -> List[float]:
+    """Convert AlphaBeta integer scores to a probability distribution.
+
+    Uses temperature-scaled softmax.  Higher temperature produces a softer
+    (more uniform) distribution; lower temperature makes it sharper.
+
+    Scores are shifted by the maximum for numerical stability before
+    exponentiation, so absolute score magnitude is irrelevant — only
+    differences between scores matter.
+    """
+    if len(scores) == 0:
+        raise ValueError("scores must not be empty")
+    if len(scores) == 1:
+        return [1.0]
+
+    max_score = max(scores)
+    shifted = [float(s - max_score) / temperature for s in scores]
+    # Clip extreme values to avoid overflow in exp.
+    clamped = [min(max(x, -50.0), 0.0) for x in shifted]
+    exps = [math.exp(x) for x in clamped]
+    total = sum(exps)
+    if total <= 0:
+        # Degenerate case: all probabilities equal.
+        return [1.0 / len(scores)] * len(scores)
+    return [e / total for e in exps]
+
+
 class LowConfidencePosition(ValueError):
     pass
 
@@ -251,6 +299,13 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override AlphaBeta search depth for the teacher.",
     )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=100.0,
+        help="Temperature for softmax conversion of AlphaBeta scores to probabilities. "
+        "Higher values produce softer distributions. Default=100.",
+    )
     args = parser.parse_args()
 
     if args.max_samples is not None and args.max_samples <= 0:
@@ -263,6 +318,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--min-score-margin must be non-negative")
     if not 0 < args.position_sample_rate <= 1:
         parser.error("--position-sample-rate must be in (0, 1]")
+    if args.temperature <= 0:
+        parser.error("--temperature must be positive")
     return args
 
 
@@ -278,6 +335,7 @@ def main() -> None:
         alphabeta_depth=args.alphabeta_depth,
         min_score_margin=args.min_score_margin,
         position_sample_rate=args.position_sample_rate,
+        temperature=args.temperature,
     )
 
 

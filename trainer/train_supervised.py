@@ -484,11 +484,21 @@ def compute_loss(
     batch: dict[str, object],
     value_loss_weight: float,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    policy_loss_per_sample = nn.functional.cross_entropy(
-        output["policy_logits"],
-        batch["policy_target_index"],
-        reduction="none",
-    )
+    # Policy loss: use soft targets (KL divergence) when available,
+    # falling back to hard-label cross-entropy for legacy data.
+    policy_logits = output["policy_logits"]  # [B, M]
+    if "policy_target_probs" in batch and batch["policy_target_probs"] is not None:
+        policy_loss_per_sample = soft_cross_entropy(
+            policy_logits,
+            batch["policy_target_probs"],
+            batch["move_mask"],
+        )
+    else:
+        policy_loss_per_sample = nn.functional.cross_entropy(
+            policy_logits,
+            batch["policy_target_index"],
+            reduction="none",
+        )
     value_loss_per_sample = nn.functional.mse_loss(
         output["value"],
         batch["value_target"],
@@ -498,6 +508,37 @@ def compute_loss(
     value_loss = weighted_mean(value_loss_per_sample, batch["value_weight"])
     loss = policy_loss + value_loss_weight * value_loss
     return loss, policy_loss, value_loss
+
+
+def soft_cross_entropy(
+    logits: torch.Tensor,
+    target_probs: torch.Tensor,
+    move_mask: torch.Tensor,
+) -> torch.Tensor:
+    """Cross-entropy with a soft (distributional) target.
+
+    Computes -sum(target_probs * log_softmax(logits)) per sample, masked
+    so that padded move positions (where move_mask == 0) contribute zero.
+
+    Args:
+        logits: [B, M] raw policy logits (may contain MASKED_LOGIT for
+                padded positions).
+        target_probs: [B, M] teacher probability distribution, already
+                      padded with zeros for invalid positions.
+        move_mask: [B, M] 1 for legal moves, 0 for padded positions.
+
+    Returns:
+        [B] loss per sample.
+    """
+    log_probs = nn.functional.log_softmax(logits, dim=-1)  # [B, M]
+    # Masked positions have log_prob ≈ -inf after mask fill in forward();
+    # zero them out so that target_probs * log_prob = 0 for those entries.
+    safe_log_probs = torch.where(
+        move_mask.bool(), log_probs, torch.zeros_like(log_probs)
+    )
+    # Sum over the move dimension: -target * log_prob for each legal move.
+    per_sample = -(target_probs * safe_log_probs).sum(dim=-1)  # [B]
+    return per_sample
 
 
 def weighted_mean(values: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:

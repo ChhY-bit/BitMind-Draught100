@@ -30,14 +30,14 @@
 
 | 模块 | 内容 | 状态 |
 |---|---|---|
-| `train_supervised.py` | 监督/蒸馏训练，checkpoint 管理，CSV 日志 | ✅（待加 KL/soft-label loss） |
+| `train_supervised.py` | 监督/蒸馏训练，checkpoint 管理，CSV 日志 | ✅ |
 
 ### 应用脚本 `scripts/`
 
 | 模块 | 内容 | 状态 |
 |---|---|---|
 | `selfplay.py` | Agent 对局 JSONL 数据生成 | ✅ |
-| `search_improve.py` | AlphaBeta Teacher 重标注，`--min-score-margin` 过滤 | ✅（待升级 soft target） |
+| `search_improve.py` | AlphaBeta Teacher 重标注，`--min-score-margin` 过滤，软标签输出 | ✅ |
 | `arena.py` | 批量对战评测，随机 opening | ✅ |
 | `compare_checkpoints.py` | 多 seed/opening 换边评测，quick/standard/full 晋级判断 | ✅ |
 | `inspect_dataset.py` | JSONL 数据质量检查 | ✅ |
@@ -83,10 +83,41 @@ make all-python-test   # 全部
 
 按照 ROADMAP Phase 1 路线：
 
-1. **`search_improve.py` 升级为 soft target**：输出候选动作评分分布，而非单一 best move
-2. **`train_supervised.py` 加入 KL loss**：支持 soft label 训练
+1. ~~**`search_improve.py` 升级为 soft target**~~ ✅ 已完成（2026-06-12）
+2. ~~**`train_supervised.py` 加入 KL loss**~~ ✅ 已完成（2026-06-12）
 3. **用 alphabeta depth=3 生成大规模训练数据**，替代 depth=2 教师
 4. **训练 → compare_checkpoints 评测 → 晋级或回退** 闭环
+
+### Soft Target 升级详情（2026-06-12）
+
+`search_improve.py` 现在输出 `policy_target_probs`（温度 softmax 概率分布），训练自动检测并使用软标签：
+
+- **`search_improve.py`**：新增 `--temperature` 参数（默认 100），将 AlphaBeta 分数通过温度缩放 softmax 转换为概率分布，写入 `policy_target_probs` 字段（与 `legal_moves` 平行）。`teacher_temperature` 记录在样本中。
+- **`dataset.py`**：`training_item_from_sample` 提取 `policy_target_probs`；`collate_batch` 和 `pad_probs` 处理 padding；`to_torch_batch` 转为张量。
+- **`train_supervised.py`**：新增 `soft_cross_entropy()` 函数，当 batch 中存在 `policy_target_probs` 时自动使用软交叉熵 loss；无软标签时自动回退到硬标签 one-hot CE。完全向后兼容。
+- **模型未修改**：`CandidateMoveNet` 无需改动，输出 `policy_logits` 天然支持软标签训练。
+
+## 数据管线（新用户从此开始）
+
+从零到训练模型的完整流程，详见 [README.md](README.md) 的「训练数据管线」章节。
+
+**三步概述**：
+
+```
+selfplay (depth=2) → search_improve (depth=3, 软标签) → train_supervised
+     出题                 标准答案                          学生学习
+```
+
+**为什么 selfplay 用 depth=2 而 improve 用 depth=3？**
+
+| | selfplay | search_improve |
+|---|---|---|
+| **角色** | 生成多样化合理局面（"出题"） | 给每个局面打最高质量标签（"标准答案"） |
+| **深度** | depth=2 | depth=3 |
+| **速度** | 快（depth=3 的 5 倍+） | 慢，但只跑一次 |
+| **要求** | 走法不能太离谱即可 | 越准确越好 |
+
+depth=2 自博弈已经能产生人类可理解的对局进展；而 search_improve 用 depth=3 Teacher 搜索重新评估每个合法走法，通过温度 softmax 转为概率分布。这样在有限算力下最大化数据质量和数量。
 
 ## 未完成事项（非紧急）
 

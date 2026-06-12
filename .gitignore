@@ -1,6 +1,38 @@
+# Build artifacts
 build/
+
+# Python bytecode
 __pycache__/
 *.py[cod]
-data/
+
+# Compiled shared libraries (kept under build/, but also catch stray ones)
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Model checkpoints (large binary files)
+*.pt
+*.pth
 trainer/checkpoints/
+
+# Generated training data (can grow to GBs)
+data/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Claude Code assistant
+.claude/
+
+# Session scratch files
 resume.txt

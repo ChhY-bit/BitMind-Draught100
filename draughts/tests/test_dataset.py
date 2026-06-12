@@ -144,6 +144,38 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(batch["policy_weight"], [1.0, 1.0])
         self.assertEqual(batch["value_weight"], [1.0, 1.0])
         self.assertEqual(len(batches), 2)
+        # No soft targets in items → probs should be None.
+        self.assertIsNone(batch["policy_target_probs"])
+
+    def test_collate_pads_soft_targets(self):
+        items = [
+            {
+                "observation": [[[0]]],
+                "action_mask": [1, 1, 0],
+                "policy_target": 0,
+                "move_features": [[0.1] * MOVE_FEATURE_DIM, [0.2] * MOVE_FEATURE_DIM],
+                "policy_target_index": 0,
+                "policy_target_probs": [0.7, 0.3],
+                "value_target": 1,
+                "metadata": {"ply": 0},
+            },
+            {
+                "observation": [[[1]]],
+                "action_mask": [1, 0, 0],
+                "policy_target": 0,
+                "move_features": [[0.3] * MOVE_FEATURE_DIM],
+                "policy_target_index": 0,
+                "policy_target_probs": [1.0],
+                "value_target": -1,
+                "metadata": {"ply": 1},
+            },
+        ]
+
+        batch = collate_batch(items)
+
+        self.assertIsNotNone(batch["policy_target_probs"])
+        # max_moves = 2, so both items padded to 2.
+        self.assertEqual(batch["policy_target_probs"], [[0.7, 0.3], [1.0, 0.0]])
 
     def test_dataset_validation_rejects_bad_mask(self):
         with TemporaryDirectory() as tmp_dir:

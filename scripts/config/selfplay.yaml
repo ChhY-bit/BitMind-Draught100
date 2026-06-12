@@ -21,6 +21,10 @@ log_interval: 1
 # 随机种子。
 seed: 1
 
+# 开局随机走子数；Agent 接手前先随机走 N 步，产生多样化的起手局面。
+# AlphaBeta 等确定性 Agent 必须设置此项（推荐 4-8），否则每局棋谱完全相同。
+opening_random_plies: 6
+
 # MaterialAgent 参数文件；不需要时写 none。
 material_config: none
 

@@ -37,3 +37,34 @@ make draughts-test     # 核心库测试
 make trainer-test      # 训练器测试
 make scripts-test      # 脚本测试
 ```
+
+## 训练数据管线
+
+从零开始生成数据并训练模型的完整流程：
+
+```bash
+# Step 1: 生成自博弈对局数据
+# AlphaBeta depth=2 自博弈 + 开局随机 6 步，快速产生大量多样化合理局面
+PYTHONPATH=interface:. python3 scripts/selfplay.py \
+  --black alphabeta --white alphabeta \
+  --games 500 --opening-random-plies 6 \
+  --output data/selfplay_ab2.jsonl
+
+# Step 2: 用更强的 Teacher 重标注 + 生成软标签
+# AlphaBeta depth=3 对每个局面搜索打分，输出 policy_target_probs
+PYTHONPATH=interface:. python3 scripts/search_improve.py data/ \
+  --output data/improved_soft.jsonl \
+  --alphabeta-depth 3 --temperature 100 --min-score-margin 20
+
+# Step 3: 监督训练
+PYTHONPATH=interface:. python3 trainer/train_supervised.py data/improved_soft.jsonl \
+  --device cpu
+
+# Step 4: 评测新 checkpoint
+PYTHONPATH=interface:. python3 scripts/compare_checkpoints.py \
+  --candidate trainer/checkpoints/candidate_move_net_best.pt \
+  --baseline trainer/checkpoints/candidate_move_net_best.pt \
+  --preset quick --device cpu
+```
+
+> **数据管线原理**：selfplay 用较快的 depth=2 生成多样化合理局面（"出题"），search_improve 用更强的 depth=3 给每个局面打高质量标签（"标准答案"），训练时将 AlphaBeta 分数通过温度 softmax 转为概率分布（软标签），比单一走法标签包含更丰富的信息。详见 [PROGRESS.md](PROGRESS.md)。
