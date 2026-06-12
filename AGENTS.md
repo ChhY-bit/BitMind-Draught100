@@ -1,52 +1,78 @@
-# AGENTS.md
+# AGENTS.md — AI Agent 工作指南
 
-## 项目简述
-本项目的目标是实现一个 **100格国际跳棋** 的 AI 程序，力争让其达到超越人类的水平甚至顶尖 AI 的水平。
-项目的基本架构是：
-- 使用 **C 语言** 实现核心引擎，负责游戏的核心逻辑，包括棋盘初始化、合法动作判断、终局判断、状态复制等所有对局中可能用到的底层功能。这部分功能在目录 *engine/* 下。
-- 使用 **Python/PyTorch** 实现深度学习与强化学习，构建训练器，负责训练用于对局的 AI 模型。这部分功能在目录 *trainer/* 下。
-- 使用 **Python** 实现 GUI 程序，负责与用户交互，包括显示棋盘、导入对局智能体、获取用户操作等。这部分功能在目录 *gui/* 下。
+## 项目概述
 
-## Codex 的角色
-- 编码执行助手
-- 遵守规范、接口和测试要求
-- 不擅自改动公共接口
-- 一个谨慎的“施工者”，在没有把握的情况下，会遵循“## 无把握时的处理”部分展开追问
+**BitMind-Draught100**：100 格国际跳棋 AI。最终目标是构建一个网络引导 MCTS 搜索的智能体，棋力超越同等计算预算下的纯 AlphaBeta 搜索。
 
-## 无把握时的处理
-- 在不能保证95%以上的把握能理解用户提出的需求前，不会正式开始代码的编写或增删工作
-- 在用户的表述模糊、需求不明确或者可能产生歧义时，会追问用户的要求，一次只追问一个问题，并给出可能的选项
-- 如果用户仍然不明确或仍然无把握，将继续追问
-- 追问问题的数量不超过10个，此后如果仍然有无把握的问题，将跳过实现无把握的部分，并将其汇总成清单列出，此后开始实现有把握的部分
+详见 [ROADMAP.md](ROADMAP.md)。
 
-## 修改约束
-- 每次修改只改任务指定模块
-- 不删除已有文件
-- 不引入大型第三方库
-- 生成新文件时必须说明理由和用途
-- 修改后必须说明改动
-- 函数和接口必须保持兼容 
-- 每次完成修改后，将当前进度同步到 PROGRESS.md 中
+## 当前阶段：Phase 1 — 蒸馏模仿
 
-## C 代码规范
-- C标准应符合主流
-- 头文件在 include/
-- 源文件在 src/
-- 检查非法参数
-- 函数实现时有输入输出注释
+用 AlphaBeta (depth=3) 作为 Teacher，训练 `CandidateMoveNet` 逼近其棋力。
 
-## Python 代码规范
+- 数据生成：`scripts/selfplay.py`（对局）+ `scripts/search_improve.py`（Teacher 重标注）
+- 训练：`trainer/train_supervised.py`
+- 评测：`scripts/compare_checkpoints.py`（quick → standard → full 晋级）
+
+## 项目架构
+
+```
+engine/         C 规则引擎（只读，棋规的唯一真源）
+interface/      C↔Python ctypes 桥接（只读）
+draughts/       核心 Python 库（env, model, agents, dataset, move_encoding）
+trainer/        训练入口（train_supervised.py）
+scripts/        独立应用脚本（selfplay, search_improve, arena, compare, inspect）
+gui/            Tkinter 棋盘界面
+```
+
+层间依赖：`scripts/trainer` → `draughts` → `interface` → `engine`
+
+详见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
+## 代码规范
+
+### Python
 - Python 3.10+
-- trainer/ 只做训练，期间可能调用C引擎
-- gui/ 只用于用户交互及其可视化
+- 新模块优先放入 `draughts/`（库）或 `scripts/`（应用）
+- `trainer/` 只放训练循环，不放数据生成或评测
+- 所有 CLI 脚本用 argparse，配置用 YAML，CLI 参数覆盖 YAML
+- `from __future__ import annotations` 在所有文件中
+- 类型标注使用 `Optional`、`Sequence` 等 typing 泛型
 
-## 测试要求
-- 核心逻辑修改必须有对应单元测试
-- 包括棋盘初始化、合法动作判断、终局判断、状态复制
+### C
+- C11，`-Wall -Wextra -Wpedantic -Werror`
+- 规则逻辑只在 `engine/src/` 中
+- 所有公开函数检查 NULL 参数，返回错误码
+- 头文件在 `engine/include/`
 
-## 输出要求
-- 列出修改的文件
-- 描述实现的功能
-- 指明如何编译和测试
-- 是否有未完成事项
-- 是否改变公共接口
+### 测试
+- 修改核心逻辑必须跑对应测试
+- `make test` — C 引擎
+- `make interface-test` — C↔Python 接口
+- `make draughts-test` — 核心库
+- `make trainer-test` — 训练器
+- `make scripts-test` — 脚本
+- `make all-python-test` — 全部 Python 测试
+
+## 约束
+
+- **不引入大型第三方库**。唯一外部依赖是 `torch`。
+- **不修改 engine/ 和 interface/ 的公共 API**。它们是稳定的底层。
+- **不删除已有功能的文件**，除非明确讨论过。
+- **修改后必须更新相关 README** 和 `PROGRESS.md`。
+- 生成新文件时说明理由和用途。
+- 函数和接口保持兼容。
+
+## 工作流程
+
+1. 阅读 [ROADMAP.md](ROADMAP.md) 了解当前阶段和长期方向
+2. 阅读 `PROGRESS.md` 了解最新状态
+3. 修改代码
+4. 运行 `make test && make interface-test && make all-python-test`
+5. 更新 `PROGRESS.md`
+
+## 无把握时
+
+- 不确定需求时先追问，一次只问一个问题
+- 给出可能的选项，而非开放式提问
+- 超过 10 个疑问仍未澄清的，汇总列出，先做有把握的部分

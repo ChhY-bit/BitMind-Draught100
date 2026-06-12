@@ -104,7 +104,7 @@ static void append_best_capture_move(
     ++(*count);
 }
 
-static int try_add_man_quiet_move(
+static void try_add_man_quiet_move(
     const DraughtsState *state,
     DraughtsMove *moves,
     int max_moves,
@@ -118,18 +118,16 @@ static int try_add_man_quiet_move(
     DraughtsPiece target;
 
     if (draughts_coord_to_square(row, col, &to) != DRAUGHTS_OK) {
-        return DRAUGHTS_OK;
+        return;
     }
 
     if (draughts_get_piece(state, to, &target) != DRAUGHTS_OK) {
-        return DRAUGHTS_OK;
+        return;
     }
 
     if (target == DRAUGHTS_EMPTY) {
-        return append_quiet_move(moves, max_moves, count, from, to);
+        append_quiet_move(moves, max_moves, count, from, to);
     }
-
-    return DRAUGHTS_OK;
 }
 
 static void add_king_quiet_moves(
@@ -169,11 +167,6 @@ static void add_king_quiet_moves(
             target_col += col_delta[direction];
         }
     }
-}
-
-static int is_valid_square_id(int square)
-{
-    return square >= 1 && square <= DRAUGHTS_SQUARE_COUNT;
 }
 
 static int is_move_shape_safe(const DraughtsMove *move)

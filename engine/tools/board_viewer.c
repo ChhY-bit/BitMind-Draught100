@@ -188,11 +188,6 @@ static int print_legal_moves(const DraughtsState *state, DraughtsMove *moves, in
     return DRAUGHTS_OK;
 }
 
-static int set_piece(DraughtsState *state, int square, DraughtsPiece piece)
-{
-    return draughts_set_piece(state, square, piece);
-}
-
 static int setup_initial(DraughtsState *state)
 {
     return draughts_init(state) == DRAUGHTS_OK;
@@ -203,9 +198,9 @@ static int setup_man_capture(DraughtsState *state)
     if (draughts_clear(state) != DRAUGHTS_OK) {
         return 0;
     }
-    return set_piece(state, 21, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK
-        && set_piece(state, 24, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK
-        && set_piece(state, 27, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK;
+    return draughts_set_piece(state, 21, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK
+        && draughts_set_piece(state, 24, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK
+        && draughts_set_piece(state, 27, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK;
 }
 
 static int setup_man_multi(DraughtsState *state)
@@ -213,9 +208,9 @@ static int setup_man_multi(DraughtsState *state)
     if (draughts_clear(state) != DRAUGHTS_OK) {
         return 0;
     }
-    return set_piece(state, 21, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK
-        && set_piece(state, 27, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK
-        && set_piece(state, 38, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK;
+    return draughts_set_piece(state, 21, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK
+        && draughts_set_piece(state, 27, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK
+        && draughts_set_piece(state, 38, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK;
 }
 
 static int setup_king_quiet(DraughtsState *state)
@@ -223,8 +218,8 @@ static int setup_king_quiet(DraughtsState *state)
     if (draughts_clear(state) != DRAUGHTS_OK) {
         return 0;
     }
-    return set_piece(state, 28, DRAUGHTS_BLACK_KING) == DRAUGHTS_OK
-        && set_piece(state, 1, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK;
+    return draughts_set_piece(state, 28, DRAUGHTS_BLACK_KING) == DRAUGHTS_OK
+        && draughts_set_piece(state, 1, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK;
 }
 
 static int setup_king_capture(DraughtsState *state)
@@ -232,8 +227,8 @@ static int setup_king_capture(DraughtsState *state)
     if (draughts_clear(state) != DRAUGHTS_OK) {
         return 0;
     }
-    return set_piece(state, 28, DRAUGHTS_BLACK_KING) == DRAUGHTS_OK
-        && set_piece(state, 19, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK;
+    return draughts_set_piece(state, 28, DRAUGHTS_BLACK_KING) == DRAUGHTS_OK
+        && draughts_set_piece(state, 19, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK;
 }
 
 static int setup_king_multi(DraughtsState *state)
@@ -241,9 +236,9 @@ static int setup_king_multi(DraughtsState *state)
     if (draughts_clear(state) != DRAUGHTS_OK) {
         return 0;
     }
-    return set_piece(state, 28, DRAUGHTS_BLACK_KING) == DRAUGHTS_OK
-        && set_piece(state, 19, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK
-        && set_piece(state, 20, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK;
+    return draughts_set_piece(state, 28, DRAUGHTS_BLACK_KING) == DRAUGHTS_OK
+        && draughts_set_piece(state, 19, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK
+        && draughts_set_piece(state, 20, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK;
 }
 
 static int setup_max_capture(DraughtsState *state)
@@ -251,11 +246,11 @@ static int setup_max_capture(DraughtsState *state)
     if (draughts_clear(state) != DRAUGHTS_OK) {
         return 0;
     }
-    return set_piece(state, 22, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK
-        && set_piece(state, 28, DRAUGHTS_BLACK_KING) == DRAUGHTS_OK
-        && set_piece(state, 27, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK
-        && set_piece(state, 37, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK
-        && set_piece(state, 19, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK;
+    return draughts_set_piece(state, 22, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK
+        && draughts_set_piece(state, 28, DRAUGHTS_BLACK_KING) == DRAUGHTS_OK
+        && draughts_set_piece(state, 27, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK
+        && draughts_set_piece(state, 37, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK
+        && draughts_set_piece(state, 19, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK;
 }
 
 static int setup_promotion(DraughtsState *state)
@@ -263,8 +258,8 @@ static int setup_promotion(DraughtsState *state)
     if (draughts_clear(state) != DRAUGHTS_OK) {
         return 0;
     }
-    return set_piece(state, 41, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK
-        && set_piece(state, 1, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK;
+    return draughts_set_piece(state, 41, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK
+        && draughts_set_piece(state, 1, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK;
 }
 
 static int setup_terminal(DraughtsState *state)
@@ -272,10 +267,10 @@ static int setup_terminal(DraughtsState *state)
     if (draughts_clear(state) != DRAUGHTS_OK) {
         return 0;
     }
-    return set_piece(state, 46, DRAUGHTS_BLACK_KING) == DRAUGHTS_OK
-        && set_piece(state, 41, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK
-        && set_piece(state, 47, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK
-        && set_piece(state, 1, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK;
+    return draughts_set_piece(state, 46, DRAUGHTS_BLACK_KING) == DRAUGHTS_OK
+        && draughts_set_piece(state, 41, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK
+        && draughts_set_piece(state, 47, DRAUGHTS_BLACK_MAN) == DRAUGHTS_OK
+        && draughts_set_piece(state, 1, DRAUGHTS_WHITE_MAN) == DRAUGHTS_OK;
 }
 
 static const Scenario *find_scenario(const char *name)

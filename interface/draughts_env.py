@@ -276,6 +276,11 @@ class DraughtsEnv:
         return cloned
 
     def render_text(self) -> str:
+        """Return an ASCII board representation for debugging.
+
+        This method is a debugging utility; it is not used by the trainer
+        or GUI, both of which have their own rendering paths.
+        """
         observation = self.observation()
         squares = observation["squares"]
         rows = []

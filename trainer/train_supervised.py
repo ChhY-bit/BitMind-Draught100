@@ -14,8 +14,8 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Subset
 
-from dataset import DataSource, DraughtsJsonlDataset, collate_batch, to_torch_batch
-from model import CandidateMoveNet, DEFAULT_MODEL_CONFIG_PATH, load_model_config
+from draughts.dataset import DataSource, DraughtsJsonlDataset, collate_batch, to_torch_batch
+from draughts.model import CandidateMoveNet, DEFAULT_MODEL_CONFIG_PATH, load_model_config
 
 
 DEFAULT_SUPERVISED_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "supervised.yaml"

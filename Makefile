@@ -65,8 +65,16 @@ interface: $(LIBDRAUGHTS)
 interface-test: interface
 	PYTHONPATH=interface python3 -m unittest interface/test_interface.py
 
+draughts-test: interface
+	PYTHONPATH=interface:.:scripts:draughts/tests python3 -m unittest discover -s draughts/tests -p 'test_*.py'
+
 trainer-test: interface
-	PYTHONPATH=interface:trainer python3 -m unittest discover -s trainer/tests -p 'test_*.py'
+	PYTHONPATH=interface:.:scripts:draughts/tests python3 -m unittest discover -s trainer/tests -p 'test_*.py'
+
+scripts-test: interface
+	PYTHONPATH=interface:.:scripts:draughts/tests python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+
+all-python-test: draughts-test trainer-test scripts-test
 
 clean:
 	rm -rf $(BUILD_DIR)

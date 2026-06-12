@@ -2,11 +2,6 @@
 
 #include <string.h>
 
-static int is_valid_square_id(int square_id)
-{
-    return square_id >= 1 && square_id <= DRAUGHTS_SQUARE_COUNT;
-}
-
 static int is_valid_piece(DraughtsPiece piece)
 {
     return piece >= DRAUGHTS_EMPTY && piece <= DRAUGHTS_WHITE_KING;

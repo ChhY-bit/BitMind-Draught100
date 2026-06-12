@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 import torch
 
 from selfplay import generate_dataset
-from train_supervised import (
+from trainer.train_supervised import (
     compute_loss,
     load_data_source_config,
     load_supervised_config,

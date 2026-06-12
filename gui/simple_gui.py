@@ -5,7 +5,7 @@ import sys
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, font, messagebox, ttk
 from typing import Dict, List, Optional, Sequence
 
 
@@ -13,13 +13,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INTERFACE_DIR = PROJECT_ROOT / "interface"
 if str(INTERFACE_DIR) not in sys.path:
     sys.path.insert(0, str(INTERFACE_DIR))
-TRAINER_DIR = PROJECT_ROOT / "trainer"
-if str(TRAINER_DIR) not in sys.path:
-    sys.path.insert(0, str(TRAINER_DIR))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from draughts_env import DraughtsEnv, Move  # noqa: E402
-from agents import SupervisedAgent  # noqa: E402
-from env import encode_observation  # noqa: E402
+from draughts.agents import SupervisedAgent  # noqa: E402
+from draughts.env import EncodedObservationAdapter, encode_observation  # noqa: E402
+from draughts.move_encoding import coord_to_square, square_to_coord  # noqa: E402
 
 
 BOARD_SIZE = 10
@@ -73,7 +73,14 @@ class HumanPlayer:
 
 
 @dataclass
-class RandomAgent:
+class RandomPlayer:
+    """GUI player adapter for random move selection.
+
+    This is distinct from draughts.agents.RandomAgent — it uses the GUI's
+    choose_move() contract (returns Move or None) rather than the standard
+    Agent.select_action() interface (returns action_id).
+    """
+
     name: str
     rng: random.Random
     kind: str = "random"
@@ -110,14 +117,6 @@ class SupervisedPlayer:
             EncodedObservationAdapter(env),
         )
         return find_move_by_action_id(moves, action_id)
-
-
-class EncodedObservationAdapter:
-    def __init__(self, env: DraughtsEnv) -> None:
-        self.env = env
-
-    def observation(self):
-        return encode_observation(self.env.observation())
 
 
 class BoardView(tk.Canvas):
@@ -521,7 +520,7 @@ class GameController:
     def _make_player(self, side: int, kind: str, checkpoint_path: Optional[str] = None):
         side_label = "黑方" if side == BLACK_SIDE else "白方"
         if kind == "random":
-            return RandomAgent(f"{side_label}随机AI", self.rng)
+            return RandomPlayer(f"{side_label}随机AI", self.rng)
         if kind == "supervised":
             if not checkpoint_path:
                 raise ValueError(f"{side_label}监督模型AI需要选择 checkpoint 文件")
@@ -555,6 +554,7 @@ class GameController:
 class DraughtsApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
+        self._configure_fonts()
         self.title("BitMind 国际跳棋 - GUI v0")
         self.minsize(1160, 690)
 
@@ -571,6 +571,19 @@ class DraughtsApp(tk.Tk):
         self._build_layout()
         self.controller = GameController(self)
         self.after(0, self.controller.open_new_game_dialog)
+
+    @staticmethod
+    def _configure_fonts() -> None:
+        """Set up CJK-friendly default fonts so Chinese text renders clearly."""
+        preferred = ("Noto Sans CJK SC", "WenQuanYi Micro Hei", "Microsoft YaHei", "TkDefaultFont")
+        available = {font.Font(family=f).actual("family") for f in font.families()}
+        chosen = next((f for f in preferred if f in available), "TkDefaultFont")
+
+        for name in ("TkDefaultFont", "TkTextFont", "TkHeadingFont", "TkFixedFont"):
+            try:
+                font.nametofont(name).configure(family=chosen, size=10)
+            except Exception:
+                pass
 
     def _build_layout(self) -> None:
         self.columnconfigure(0, weight=0)
@@ -868,22 +881,6 @@ class DraughtsApp(tk.Tk):
         if not selected:
             return
         self.controller.execute_move_by_action_id(int(selected[0]))
-
-
-def square_to_coord(square_id: int) -> tuple[int, int]:
-    zero_based = square_id - 1
-    row = zero_based // 5
-    offset = zero_based % 5
-    col = offset * 2 + (1 if row % 2 == 0 else 0)
-    return row, col
-
-
-def coord_to_square(row: int, col: int) -> Optional[int]:
-    if row < 0 or row >= BOARD_SIZE or col < 0 or col >= BOARD_SIZE:
-        return None
-    if (row + col) % 2 == 0:
-        return None
-    return row * 5 + (col // 2) + 1
 
 
 def group_moves_by_start(moves: Sequence[Move]) -> Dict[int, List[Move]]:

@@ -13,6 +13,11 @@ extern "C" {
 #define DRAUGHTS_MAX_MOVE_PATH 32
 #define DRAUGHTS_MAX_MOVE_CAPTURES 20
 
+static inline int is_valid_square_id(int square_id)
+{
+    return square_id >= 1 && square_id <= DRAUGHTS_SQUARE_COUNT;
+}
+
 typedef enum {
     DRAUGHTS_OK = 0,
     DRAUGHTS_ERR_NULL = -1,
