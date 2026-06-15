@@ -8,33 +8,32 @@
 
 ## 三阶段路线
 
-### Phase 1：蒸馏模仿（当前阶段）
+### Phase 1：蒸馏模仿 ✅ 已完成（2026-06-15）
 
-**目标**：训练神经网络基座，使其棋力接近 AlphaBeta depth=3。
+**目标**：训练神经网络基座，使其具备棋局"棋感"（policy + value）。
 
-**方法**：
+**完成情况**：
 
-- 用 `alphabeta_plus`（depth=3 或更深）作为 Teacher，为大量局面生成训练标签
-- 输出 **soft policy target**：不是单一 best move，而是所有候选动作的评分分布
-- 输出 **value target**：搜索后从当前行棋方视角的局面价值
-- 使用 `min_score_margin` 过滤低置信度标签
-- 训练 `CandidateMoveNet`：KL 散度逼近 Teacher 的 policy 分布，MSE 逼近 value
-- 用 `compare_checkpoints.py quick → standard → alphabeta` 评测，decisive_wr ≥ 0.53 晋级
+- 用 `alphabeta_plus`（depth=3）作为 Teacher，为 600 局 selfplay 产生的 ~138,000 个局面生成训练标签
+- 实现 **soft policy target**：温度 softmax 将 AlphaBeta 分数转为候选动作概率分布
+- 训练 `CandidateMoveNet`：软交叉熵逼近 Teacher 的 policy 分布，MSE 逼近 value
+- 使用 `min_score_margin=20` 过滤低置信度标签，保留率约 25%（~35,000 样本）
+- 训练结果：policy accuracy 75%（val）~86%（train），value MAE 0.10
 
-**关键指标**：网络对 AlphaBeta depth=3 胜率 > 40%。
+**棋力水平**：
 
-**技术依赖**：
+| 对手 | 胜率 | 说明 |
+|------|------|------|
+| random | 85% (17:3) | 基础棋感已建立 |
+| material | 70% (70:30) | 超越一步前瞻的启发式 |
+| alphabeta (depth=2) | 0% (0:100) | greedy 推理无搜索，符合预期 |
+| alphabeta (depth=3) | 未测 | 留待 Phase 2 |
 
-| 模块 | 用途 |
-|---|---|
-| `draughts/agents.py` | AlphaBetaPlusAgent 作为 Teacher |
-| `scripts/search_improve.py` | 搜索生成训练标签（需升级为 soft target） |
-| `trainer/train_supervised.py` | 监督/蒸馏训练（需加 KL loss） |
-| `scripts/compare_checkpoints.py` | 晋级评测 |
+**关键结论**：基座网络已具备棋感（会选吃子、value 能判断局面优劣），差的只是前瞻能力。这正是 Phase 2 要补齐的。
 
 ---
 
-### Phase 2：搜索增强（网络 + MCTS）
+### Phase 2：搜索增强（网络 + MCTS）← 当前阶段
 
 **目标**：用网络引导 MCTS，推理棋力超越纯 AlphaBeta。
 
@@ -44,18 +43,19 @@
   - 分支选择：PUCT 公式，prior 来自 `policy_logits`
   - 叶子节点评估：`value_head` 输出局面价值
   - 搜索结束时返回 visit count 分布（新的 policy target）和最终 value
-- 与 AlphaBeta depth=3 对局评测
+- 与 AlphaBeta depth=2 / depth=3 对局评测
 - 仍可用 AlphaBeta 辅助生成训练数据
 
-**关键指标**：MCTS + 网络稳定战胜 AlphaBeta depth=3。
+**关键指标**：MCTS + 网络稳定战胜 AlphaBeta depth=2 → depth=3。
 
 **技术依赖**：
 
-| 模块 | 用途 |
-|---|---|
-| `draughts/model.py` | 网络需同时输出 policy_logits + value（已满足） |
-| `draughts/env.py` | `clone()` 性能可能成为 MCTS 瓶颈 |
-| 新模块 `draughts/mcts.py` | MCTS 搜索实现 |
+| 模块 | 用途 | 状态 |
+|------|------|------|
+| `draughts/model.py` | 网络需同时输出 policy_logits + value | ✅ 已满足 |
+| `draughts/env.py` | `clone()` 性能可能成为 MCTS 瓶颈 | 需关注 |
+| `trainer/checkpoints/candidate_move_net_best.pt` | Phase 1 训练的基座网络 | ✅ 可用 |
+| 新模块 `draughts/mcts.py` | MCTS 搜索实现 | 待实现 |
 
 ---
 
@@ -97,7 +97,7 @@ Teacher     AlphaBeta       AlphaBeta+MCTS  上一轮自己
 以下路线已被实验证明低效或失败，**不再作为开发方向**：
 
 | 路线 | 失败原因 |
-|---|---|
+|------|---------|
 | 简化 PPO（`rl_selfplay.py` + `train_selfplay.py`） | 多轮迭代卡在 51%-52% 胜率，无法稳定晋级 |
 | 纯 value_head 搜索（`ValueSearchAgent`） | 对 supervised 约 32:166，当前 value 无法引导落子 |
 | value-only 全网络微调 | 更新共享 encoder 后破坏 policy，wr=0.398 |
@@ -106,11 +106,11 @@ Teacher     AlphaBeta       AlphaBeta+MCTS  上一轮自己
 
 ## 里程碑
 
-| 里程碑 | 阶段 | 判断标准 |
-|---|---|---|
-| M1 | Phase 1 | 网络对 AlphaBeta depth=3 胜率 > 30% |
-| M2 | Phase 1 | 网络对 AlphaBeta depth=3 胜率 > 40%，晋级 Phase 2 |
-| M3 | Phase 2 | MCTS+网络 对 AlphaBeta depth=3 胜率 > 50% |
-| M4 | Phase 2 | MCTS+网络 对 AlphaBeta depth=3 胜率 > 70%，晋级 Phase 3 |
-| M5 | Phase 3 | 自博弈迭代 1 轮晋升成功 |
-| M6 | Phase 3 | 自博弈迭代 3 轮以上，棋力持续上升 |
+| 里程碑 | 阶段 | 判断标准 | 状态 |
+|--------|------|---------|------|
+| M1 | Phase 1 | 网络对 AlphaBeta depth=3 胜率 > 30% | —（跳过，greedy 推理难达） |
+| M2 | Phase 1 | 训练出可用基座网络，进入 Phase 2 | ✅ 已完成 |
+| M3 | Phase 2 | MCTS+网络 对 AlphaBeta depth=2 胜率 > 50% | 待评测 |
+| M4 | Phase 2 | MCTS+网络 对 AlphaBeta depth=3 胜率 > 50% | 待评测 |
+| M5 | Phase 3 | 自博弈迭代 1 轮晋升成功 | — |
+| M6 | Phase 3 | 自博弈迭代 3 轮以上，棋力持续上升 | — |

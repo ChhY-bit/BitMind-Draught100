@@ -25,6 +25,7 @@ BitMind-Draught100
 │   ├── model.py                      CandidateMoveNet 网络定义
 │   ├── agents.py                     所有 Agent 类与工厂函数
 │   ├── dataset.py                    JSONL 数据读取与 batch 组装
+│   ├── mcts.py                       Phase 2: MCTS 搜索（待实现）
 │   ├── config/                       模型与 Agent 配置
 │   └── tests/                        对应模块的单元测试
 │
@@ -64,7 +65,9 @@ engine/                     ← C 规则引擎（编译进 libdraughts.so）
 
 原则：上层只向下依赖，不允许跨层互相导入。棋规逻辑只在 `engine/` 内实现。Python 端调用 C 接口推进局面，不重新实现吃子、升王、最多吃子、终局等规则。
 
-## 数据流
+Phase 2 新增模块：`draughts/mcts.py`（MCTS 搜索），调用 `draughts/model.py`（网络推理）和 `draughts/env.py`（局面克隆）。
+
+## 数据流（Phase 1）
 
 ```text
 engine/ + interface/
