@@ -8,8 +8,15 @@ from typing import Dict, List, Optional, Sequence
 import torch
 
 from draughts_env import Move
+from .mcts import (
+    DEFAULT_MCTS_CONFIG_PATH,
+    MCTSConfig,
+    MCTSResult,
+    load_mcts_config,
+    mcts_search,
+)
 from .model import CandidateMoveNet, ModelConfig
-from .move_encoding import encode_legal_moves, square_to_coord
+from .move_encoding import encode_legal_moves, move_to_dict, square_to_coord
 
 DEFAULT_MATERIAL_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "material.yaml"
 DEFAULT_ALPHABETA_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "alphabeta.yaml"
@@ -253,21 +260,56 @@ class SupervisedAgent(Agent):
         return legal_actions[selected_index].action_id
 
 
+@dataclass
+class MCTSAgent(Agent):
+    """Agent that uses MCTS guided by a CandidateMoveNet for move selection."""
+
+    checkpoint_path: str
+    config_path: Optional[str] = None
+    device: Optional[str] = None
+    name: str = "mcts"
+
+    def __post_init__(self) -> None:
+        if not self.checkpoint_path:
+            raise ValueError("MCTSAgent requires a checkpoint path")
+        self.device_obj = torch.device(
+            self.device if self.device else ("cuda" if torch.cuda.is_available() else "cpu")
+        )
+        self.mcts_config = load_mcts_config(self.config_path)
+        self.last_result: Optional[MCTSResult] = None
+
+        checkpoint = torch.load(self.checkpoint_path, map_location=self.device_obj)
+        model_config = load_model_config_from_checkpoint(checkpoint)
+        self.model = CandidateMoveNet(config=model_config).to(self.device_obj)
+        state_dict = checkpoint.get("model_state_dict", checkpoint)
+        self.model.load_state_dict(state_dict)
+        self.model.eval()
+
+    def select_action(
+        self,
+        observation: Dict[str, object],
+        legal_actions: Sequence[Move],
+        env=None,
+    ) -> int:
+        if not legal_actions:
+            raise ValueError("MCTSAgent received no legal actions")
+        if env is None:
+            raise ValueError("MCTSAgent requires an environment for clone() and observation()")
+
+        self.last_result = mcts_search(
+            env,
+            self.model,
+            self.mcts_config,
+            self.device_obj,
+            add_noise=False,
+        )
+        return self.last_result.selected_action(temperature=self.mcts_config.temperature)
 
 
 def load_model_config_from_checkpoint(checkpoint: object) -> ModelConfig:
     if isinstance(checkpoint, dict) and isinstance(checkpoint.get("model_config"), dict):
         return ModelConfig(**checkpoint["model_config"])
     return ModelConfig()
-
-
-def move_to_dict(move: Move) -> Dict[str, object]:
-    return {
-        "action_id": move.action_id,
-        "path": list(move.path),
-        "captures": list(move.captures),
-        "is_capture": bool(move.is_capture),
-    }
 
 
 def promotion_score(move: Move, observation: Dict[str, object]) -> int:
@@ -470,6 +512,7 @@ def make_agent(
     material_config_path: Optional[str] = None,
     alphabeta_config_path: Optional[str] = None,
     supervised_checkpoint_path: Optional[str] = None,
+    mcts_config_path: Optional[str] = None,
     device: Optional[str] = None,
 ) -> Agent:
     normalized = name.strip().lower()
@@ -485,6 +528,14 @@ def make_agent(
         if supervised_checkpoint_path is None:
             raise ValueError("supervised agent requires a checkpoint path")
         return SupervisedAgent(checkpoint_path=supervised_checkpoint_path, device=device)
+    if normalized in {"mcts", "mcts-agent"}:
+        if supervised_checkpoint_path is None:
+            raise ValueError("mcts agent requires a checkpoint path (--supervised-checkpoint)")
+        return MCTSAgent(
+            checkpoint_path=supervised_checkpoint_path,
+            config_path=mcts_config_path,
+            device=device,
+        )
     raise ValueError(f"unknown agent: {name}")
 
 
@@ -495,4 +546,5 @@ def available_agents() -> List[str]:
         "alphabeta",
         "alphabeta_plus",
         "supervised",
+        "mcts",
     ]

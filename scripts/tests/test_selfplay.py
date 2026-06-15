@@ -119,7 +119,7 @@ class SelfPlayTests(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             config_path = Path(tmp_dir) / "selfplay.yaml"
             config_path.write_text(
-                "black: random\nwhite: greedy\ngames: 2\nmax_plies: 12\n"
+                "black: random\nwhite: material\ngames: 2\nmax_plies: 12\n"
                 "output: data/custom.jsonl\nlog_interval: 2\nseed: 9\n"
                 "material_config: none\nalphabeta_config: none\n"
                 "black_checkpoint: none\nwhite_checkpoint: none\ndevice: cpu\n"
@@ -130,7 +130,7 @@ class SelfPlayTests(unittest.TestCase):
             config = load_selfplay_config(config_path)
 
         self.assertEqual(config.black, "random")
-        self.assertEqual(config.white, "greedy")
+        self.assertEqual(config.white, "material")
         self.assertEqual(config.games, 2)
         self.assertEqual(config.max_plies, 12)
         self.assertEqual(config.output, "data/custom.jsonl")

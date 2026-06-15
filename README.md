@@ -1,76 +1,240 @@
 # BitMind-Draught100
 
-100 格国际跳棋 AI 程序，目标是通过神经网络引导搜索，构建超越传统 AlphaBeta 搜索方法的博弈智能体。
+100 格国际跳棋 AI——使用神经网络引导 MCTS 搜索，构建超越传统 AlphaBeta 的博弈智能体。
 
-## 文档导航
+## 软硬件要求
 
-| 文档 | 内容 |
-|---|---|
-| [CLAUDE.md](CLAUDE.md) | **AI Agent 工作指南**——接手项目的第一入口 |
-| [ROADMAP.md](ROADMAP.md) | **技术路线图**——三阶段路线，所有开发的指南 |
-| [PROGRESS.md](PROGRESS.md) | 阶段进度、实验记录、棋力数据 |
-| [SPEC.md](SPEC.md) | 国际跳棋规则规格 |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | 项目工程架构 |
-| [SETUP.md](SETUP.md) | 环境配置指南（conda/venv/pip） |
-| [engine/README-engine.md](engine/README-engine.md) | C 规则引擎参考 |
-| [interface/README-interface.md](interface/README-interface.md) | C↔Python 接口参考 |
-| [draughts/README.md](draughts/README.md) | 核心 Python 库参考 |
-| [trainer/README.md](trainer/README.md) | 训练器参考 |
-| [scripts/README.md](scripts/README.md) | 独立应用脚本参考 |
-| [gui/README-gui.md](gui/README-gui.md) | GUI 使用说明 |
+| 项目 | 最低 | 推荐 |
+|------|------|------|
+| Python | 3.10+ | 3.10+ |
+| PyTorch | ≥2.0 | ≥2.0 + CUDA |
+| C 编译器 | gcc/clang（C11） | — |
+| 操作系统 | Linux | Linux |
+| GPU | 无（CPU 训练可运行） | NVIDIA GPU（CUDA） |
+| 可选 | — | tkinter（GUI） |
+
+唯一外部 Python 依赖是 PyTorch，其余全部使用标准库。
+
+---
 
 ## 快速开始
 
+以下从零开始，按顺序完成环境搭建、测试、训练、评测的完整流程。
+
+### 1. 环境搭建
+
+创建 conda 环境并安装 PyTorch（可参见 [环境配置指南](https://chhy-bit.github.io/docs/doc.html?id=doc001)）。
+
+编译 C 引擎（生成 `build/libdraughts.so`）：
+
 ```bash
-# 安装依赖
-pip install -r requirements.txt
-
-# 编译 C 引擎
 make interface
-
-# 运行测试
-make test              # C 引擎测试
-make interface-test    # 接口测试
-make draughts-test     # 核心库测试
-make trainer-test      # 训练器测试
-make scripts-test      # 脚本测试
 ```
 
-## 训练数据管线
+### 2. 测试
 
-从零开始生成数据并训练模型（Phase 1 完整流程）：
+编译完后立即验证各层是否正常。
+
+先确认 C 接口可用（不依赖 torch）：
 
 ```bash
-# Step 1: 生成自博弈对局数据
+make interface-test
+```
+
+再验证核心库（需要 torch）：
+
+```bash
+make draughts-test
+```
+
+一次性跑完全部测试：
+
+```bash
+make all-python-test
+```
+
+### 3. 路线一：AlphaBeta 蒸馏训练
+
+先让 AlphaBeta 自己跟自己下棋产生局面，再用更强的 AlphaBeta 给每个局面打分，最后用这些"标准答案"训练神经网络。这一步产出一个具备基本棋感的基座网络。
+
+**第一步**：AlphaBeta 自博弈，产生对局局面。
+
+```bash
 PYTHONPATH=interface:. python3 scripts/selfplay.py \
   --black alphabeta --white alphabeta \
-  --games 600 --opening-random-plies 6 \
-  --output data/selfplay_ab2.jsonl --seed 42
+  --games 600 --opening-random-plies 6 --seed 42 \
+  --output data/selfplay.jsonl
+```
 
-# Step 2: AlphaBeta depth=3 Teacher 重标注 + 软标签
+**第二步**：用更强的 AlphaBeta（depth=3）给每个局面重新评分，生成软标签。
+
+```bash
 PYTHONPATH=interface:. python3 scripts/search_improve.py data/ \
   --output data/improved_soft.jsonl \
   --alphabeta-depth 3 --temperature 100 --min-score-margin 20 --seed 42
-
-# Step 3: 监督训练（自动检测并使用软标签）
-PYTHONPATH=interface:. python3 trainer/train_supervised.py data/improved_soft.jsonl \
-  --device cuda
 ```
 
-**数据管线原理**：selfplay 用较快的 depth=2 生成多样化合理局面（"出题"），search_improve 用更强的 depth=3 给每个局面打高质量标签（"标准答案"），训练时将 AlphaBeta 分数通过温度 softmax 转为概率分布（软标签）。详见 [PROGRESS.md](PROGRESS.md)。
-
-## 评测
+**第三步**：训练神经网络。
 
 ```bash
-# 对战评测（模型 vs AlphaBeta）
-PYTHONPATH=interface:. python3 scripts/arena.py \
-  --black supervised --white alphabeta \
-  --black-checkpoint trainer/checkpoints/candidate_move_net_best.pt \
-  --games 100 --opening-random-plies 4 --device cuda
+PYTHONPATH=interface:. python3 trainer/train_supervised.py \
+  data/improved_soft.jsonl --device cuda
+```
 
-# 两代模型对比评测
+训练完成后，checkpoint 保存在 `trainer/checkpoints/candidate_move_net_best.pt`。
+
+### 4. 路线二：MCTS 自博弈训练
+
+路线一的网络训练好后，就可以用它来做 MCTS 搜索。MCTS 自博弈时，搜索过程本身就是一次"深度思考"——产生的 visit count 分布天然是高质量的训练标签，不需要再让 AlphaBeta 来打分。
+
+**第一步**：MCTS 自博弈，自动产出含软标签的训练数据。
+
+```bash
+PYTHONPATH=interface:. python3 scripts/selfplay.py \
+  --black mcts --white mcts \
+  --black-checkpoint trainer/checkpoints/candidate_move_net_best.pt \
+  --white-checkpoint trainer/checkpoints/candidate_move_net_best.pt \
+  --games 2000 --opening-random-plies 6 --device cuda \
+  --output data/selfplay_mcts.jsonl
+```
+
+**第二步**：从头训练新一代网络。
+
+```bash
+PYTHONPATH=interface:. python3 trainer/train_supervised.py \
+  data/selfplay_mcts.jsonl --epochs 10 --device cuda \
+  --checkpoint-dir trainer/checkpoints/round1
+```
+
+路线二可以反复执行——每轮用最新网络做 MCTS 自博弈，产出的数据训练下一代网络，形成自增强闭环。详见下方[多轮迭代](#多轮迭代)。
+
+### 5. 评测
+
+MCTS 对决 AlphaBeta，测试棋力：
+
+```bash
+PYTHONPATH=interface:. python3 scripts/arena.py \
+  --black mcts --white alphabeta_plus \
+  --black-checkpoint trainer/checkpoints/candidate_move_net_best.pt \
+  --games 100 --device cuda
+```
+
+两代网络对比（同样 MCTS 搜索，不同网络权重）：
+
+```bash
+PYTHONPATH=interface:. python3 scripts/arena.py \
+  --black mcts --white mcts \
+  --black-checkpoint new.pt --white-checkpoint old.pt \
+  --games 100 --device cuda
+```
+
+自动晋升评测，判断新 checkpoint 是否值得替换基线：
+
+```bash
 PYTHONPATH=interface:. python3 scripts/compare_checkpoints.py \
-  --candidate trainer/checkpoints/new_model.pt \
-  --baseline trainer/checkpoints/candidate_move_net_best.pt \
+  --candidate new.pt --baseline baseline.pt \
   --preset standard --device cuda
 ```
+
+所有评测支持 `--opening-random-plies` 参数来随机化开局，避免固定开局的偏差。
+
+---
+
+## 项目架构
+
+```
+engine/          C 规则引擎（棋规唯一真源，不修改）
+interface/       C↔Python ctypes 桥接（稳定层，不修改）
+draughts/        核心 Python 库
+  ├── env.py             训练环境（局面编码、走子、克隆）
+  ├── model.py           神经网络（CandidateMoveNet）
+  ├── agents.py          智能体
+  ├── mcts.py            MCTS 搜索（PUCT + 网络引导）
+  ├── move_encoding.py   走法向量化
+  ├── dataset.py         数据加载与批处理
+  └── config/            YAML 配置文件
+trainer/         训练入口
+scripts/         独立应用脚本
+gui/             Tkinter 棋盘界面
+```
+
+依赖方向（严格单向）：`scripts` / `trainer` → `draughts` → `interface` → `engine`
+
+---
+
+## 智能体
+
+| 名称 | 类型 | 说明 |
+|------|------|------|
+| `random` | 随机 | 随机走子，基线 |
+| `material` | 启发式 | 材料+位置启发式，一步前瞻 |
+| `alphabeta` | AlphaBeta | depth=2 搜索 |
+| `alphabeta_plus` | AlphaBeta | depth=3 搜索，最强手工基线 |
+| `supervised` | 网络 greedy | 加载网络权重，直接选最高分走法 |
+| `mcts` | MCTS + 网络 | PUCT 搜索，网络提供先验和价值评估 |
+
+所有智能体通过 `make_agent("名称")` 创建。
+
+---
+
+## GUI
+
+编译后启动棋盘界面：
+
+```bash
+make interface
+```
+
+```bash
+PYTHONPATH=interface:. python3 gui/simple_gui.py
+```
+
+支持人机对弈、AI 对弈、悔棋、视角旋转。
+
+---
+
+## 多轮迭代
+
+参见上文[路线二：MCTS 自博弈训练](#4-路线二mcts-自博弈训练)。每轮产出的新网络作为下一轮 MCTS 的引擎，反复执行形成自博弈闭环：
+
+```bash
+ckpt="trainer/checkpoints/candidate_move_net_best.pt"
+for round in 1 2 3; do
+  PYTHONPATH=interface:. python3 scripts/selfplay.py \
+    --black mcts --white mcts \
+    --black-checkpoint "$ckpt" --white-checkpoint "$ckpt" \
+    --games 2000 --opening-random-plies 6 --device cuda \
+    --output "data/r${round}.jsonl"
+
+  PYTHONPATH=interface:. python3 trainer/train_supervised.py \
+    "data/r${round}.jsonl" --epochs 10 --device cuda \
+    --checkpoint-dir "trainer/checkpoints/round${round}"
+
+  ckpt="trainer/checkpoints/round${round}/candidate_move_net_best.pt"
+done
+```
+
+每轮从头训练，旧数据不混入，仅 checkpoint 传递到下一轮作为搜索引擎。
+
+---
+
+## 文档索引
+
+| 文档 | 内容 |
+|------|------|
+| [SPEC.md](SPEC.md) | 国际跳棋规则 |
+| [engine/README-engine.md](engine/README-engine.md) | C 引擎参考 |
+| [interface/README-interface.md](interface/README-interface.md) | C↔Python 接口参考 |
+| [draughts/README-draughts.md](draughts/README-draughts.md) | 核心库参考 |
+| [trainer/README-trainer.md](trainer/README-trainer.md) | 训练器参考 |
+| [scripts/README-scripts.md](scripts/README-scripts.md) | 脚本参考 |
+| [gui/README-gui.md](gui/README-gui.md) | GUI 参考 |
+
+---
+
+## 已知限制
+
+- 和棋规则未实现（三次重复、40 步规则），靠 `max_plies` 截断
+- 数据全量读入内存
+- `env.clone()` 是 MCTS 搜索的性能瓶颈
+- reward 仅提供基础终局奖励（+1/-1/0）

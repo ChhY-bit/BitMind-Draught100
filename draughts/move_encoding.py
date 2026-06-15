@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Dict, List, Sequence
 
+from draughts_env import Move
+
 
 BOARD_SIZE = 10
 SQUARE_COUNT = 50
@@ -114,3 +116,13 @@ def perspective_square_id(square_id: int, side_to_move: int) -> int:
     if side_to_move == WHITE_SIDE:
         return SQUARE_COUNT + 1 - square_id
     raise ValueError(f"invalid side_to_move: {side_to_move}")
+
+
+def move_to_dict(move: Move) -> Dict[str, object]:
+    """Convert a ctypes Move to a plain dict for encoding."""
+    return {
+        "action_id": move.action_id,
+        "path": list(move.path),
+        "captures": list(move.captures),
+        "is_capture": bool(move.is_capture),
+    }

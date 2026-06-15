@@ -35,6 +35,7 @@ class SelfPlayConfig:
     alphabeta_config: Optional[str] = None
     black_checkpoint: Optional[str] = None
     white_checkpoint: Optional[str] = None
+    mcts_config: Optional[str] = None
     device: Optional[str] = None
     append: int = 0
     auto_output_name: int = 1
@@ -82,6 +83,7 @@ def generate_dataset(
     alphabeta_config_path: Optional[str] = None,
     black_checkpoint_path: Optional[str] = None,
     white_checkpoint_path: Optional[str] = None,
+    mcts_config_path: Optional[str] = None,
     device: Optional[str] = None,
     append: bool = False,
     auto_output_name: bool = False,
@@ -102,6 +104,7 @@ def generate_dataset(
         material_config_path=material_config_path,
         alphabeta_config_path=alphabeta_config_path,
         supervised_checkpoint_path=black_checkpoint_path,
+        mcts_config_path=mcts_config_path,
         device=device,
     )
     white_seed = None if seed is None else seed + 1
@@ -111,6 +114,7 @@ def generate_dataset(
         material_config_path=material_config_path,
         alphabeta_config_path=alphabeta_config_path,
         supervised_checkpoint_path=white_checkpoint_path,
+        mcts_config_path=mcts_config_path,
         device=device,
     )
 
@@ -241,6 +245,11 @@ def play_and_collect_game(
         action_id = agent.select_action(raw, legal_actions, env)
         selected_move = find_selected_move(legal_actions, action_id)
 
+        # Extract soft policy target from MCTS search result when available.
+        policy_probs = None
+        if hasattr(agent, "last_result") and agent.last_result is not None:
+            policy_probs = agent.last_result.policy_probs
+
         samples.append(
             build_sample(
                 game_id=game_id,
@@ -251,6 +260,7 @@ def play_and_collect_game(
                 legal_actions=legal_actions,
                 selected_move=selected_move,
                 agent_name=agent.name,
+                policy_target_probs=policy_probs,
             )
         )
         env.step(action_id)
@@ -295,9 +305,10 @@ def build_sample(
     legal_actions: Sequence[Move],
     selected_move: Move,
     agent_name: str,
+    policy_target_probs: Optional[Sequence[float]] = None,
 ) -> Dict[str, object]:
     side_to_move = int(raw_observation["side_to_move"])
-    return {
+    sample: Dict[str, object] = {
         "schema_version": 1,
         "game_id": game_id,
         "ply": ply,
@@ -312,6 +323,9 @@ def build_sample(
         "selected_action_id": selected_move.action_id,
         "selected_move": move_to_dict(selected_move),
     }
+    if policy_target_probs is not None:
+        sample["policy_target_probs"] = [float(p) for p in policy_target_probs]
+    return sample
 
 
 def finalize_samples(
@@ -396,7 +410,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device",
         default=None,
-        help="Device for SupervisedAgent: cpu, cuda, or cuda:0. Defaults to auto.",
+        help="Device for SupervisedAgent/MCTSAgent: cpu, cuda, or cuda:0. Defaults to auto.",
+    )
+    parser.add_argument(
+        "--mcts-config",
+        default=None,
+        help="YAML file for MCTSAgent parameters.",
     )
     parser.add_argument(
         "--append",
@@ -423,6 +442,10 @@ def parse_args() -> argparse.Namespace:
         parser.error("--black supervised requires --black-checkpoint")
     if args.white == "supervised" and not args.white_checkpoint:
         parser.error("--white supervised requires --white-checkpoint")
+    if args.black == "mcts" and not args.black_checkpoint:
+        parser.error("--black mcts requires --black-checkpoint")
+    if args.white == "mcts" and not args.white_checkpoint:
+        parser.error("--white mcts requires --white-checkpoint")
     if args.append and args.auto_output_name:
         parser.error("--append and --auto-output-name cannot be used together")
     return args
@@ -540,6 +563,7 @@ def main() -> None:
         alphabeta_config_path=args.alphabeta_config,
         black_checkpoint_path=args.black_checkpoint,
         white_checkpoint_path=args.white_checkpoint,
+        mcts_config_path=args.mcts_config,
         device=args.device,
         append=args.append,
         auto_output_name=args.auto_output_name,

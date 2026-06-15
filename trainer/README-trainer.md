@@ -34,11 +34,26 @@ PYTHONPATH=interface:. python3 trainer/train_supervised.py data \
 
 ### 损失函数
 
+训练器自动检测数据中的软标签（`policy_target_probs` 字段）。有软标签时使用软交叉熵（KL 散度），无软标签时回退为硬标签交叉熵，完全向后兼容。
+
 ```
+# 软标签（MCTS 自博弈 / search_improve 产出）
+policy_loss = -sum(policy_target_probs * log_softmax(policy_logits))
+
+# 硬标签（普通 selfplay 产出）
 policy_loss = CrossEntropy(policy_logits, policy_target_index)
+
 value_loss  = MSE(value, value_target)
 loss        = policy_loss + value_loss_weight * value_loss
 ```
+
+### 训练数据来源
+
+| 来源 | 产生方式 | 标签类型 |
+|------|---------|---------|
+| `selfplay.py` (AlphaBeta) | AB 对局，直接记录 | 硬标签 |
+| `search_improve.py` | AB depth=3 重新评分 | 软标签 |
+| `selfplay.py` (MCTS) | MCTS 自博弈，visit count 分布 | 软标签 |
 
 ### Checkpoint 输出
 

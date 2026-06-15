@@ -17,8 +17,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from draughts_env import DraughtsEnv, Move  # noqa: E402
-from draughts.agents import SupervisedAgent  # noqa: E402
-from draughts.env import EncodedObservationAdapter, encode_observation  # noqa: E402
+from draughts.agents import (  # noqa: E402
+    AlphaBetaAgent,
+    MaterialAgent,
+    MCTSAgent,
+    SupervisedAgent,
+)
+from draughts.env import EncodedObservationAdapter, StandardDraughtsEnv, encode_observation  # noqa: E402
 from draughts.move_encoding import coord_to_square, square_to_coord  # noqa: E402
 
 
@@ -51,16 +56,24 @@ RESULT_LABELS = {
 PLAYER_KIND_LABELS = {
     "human": "人类",
     "random": "随机AI",
+    "material": "材料AI",
+    "alphabeta": "AlphaBeta AI",
+    "alphabeta_plus": "AlphaBeta+ AI",
     "supervised": "监督模型AI",
+    "mcts": "MCTS AI",
 }
 
-PLAYER_LABEL_TO_KIND = {
-    "人类": "human",
-    "随机AI": "random",
-    "监督模型AI": "supervised",
-}
+PLAYER_LABEL_TO_KIND = {v: k for k, v in PLAYER_KIND_LABELS.items()}
 
-PLAYER_KIND_OPTIONS = ("人类", "随机AI", "监督模型AI")
+PLAYER_KIND_OPTIONS = (
+    "人类",
+    "随机AI",
+    "材料AI",
+    "AlphaBeta AI",
+    "AlphaBeta+ AI",
+    "监督模型AI",
+    "MCTS AI",
+)
 
 
 @dataclass
@@ -117,6 +130,133 @@ class SupervisedPlayer:
             EncodedObservationAdapter(env),
         )
         return find_move_by_action_id(moves, action_id)
+
+
+@dataclass
+class MaterialPlayer:
+    name: str
+    kind: str = "material"
+
+    def __post_init__(self) -> None:
+        self.agent = MaterialAgent()
+
+    def is_human(self) -> bool:
+        return False
+
+    def choose_move(self, moves: Sequence[Move], env: Optional[DraughtsEnv] = None) -> Optional[Move]:
+        if not moves:
+            return None
+        if env is None:
+            raise ValueError("材料AI需要当前棋局环境")
+        wrapped = GuiEnvAdapter(env)
+        obs = wrapped.raw_observation()
+        action_id = self.agent.select_action(obs, moves, wrapped)
+        return find_move_by_action_id(moves, action_id)
+
+
+@dataclass
+class AlphaBetaPlayer:
+    name: str
+    kind: str = "alphabeta"
+
+    def __post_init__(self) -> None:
+        self.agent = AlphaBetaAgent()
+
+    def is_human(self) -> bool:
+        return False
+
+    def choose_move(self, moves: Sequence[Move], env: Optional[DraughtsEnv] = None) -> Optional[Move]:
+        if not moves:
+            return None
+        if env is None:
+            raise ValueError("AlphaBeta AI需要当前棋局环境")
+        wrapped = GuiEnvAdapter(env)
+        obs = wrapped.raw_observation()
+        action_id = self.agent.select_action(obs, moves, wrapped)
+        return find_move_by_action_id(moves, action_id)
+
+
+@dataclass
+class AlphaBetaPlusPlayer:
+    name: str
+    kind: str = "alphabeta_plus"
+
+    def __post_init__(self) -> None:
+        import draughts.agents as ag
+
+        self.agent = ag.make_agent("alphabeta_plus")
+
+    def is_human(self) -> bool:
+        return False
+
+    def choose_move(self, moves: Sequence[Move], env: Optional[DraughtsEnv] = None) -> Optional[Move]:
+        if not moves:
+            return None
+        if env is None:
+            raise ValueError("AlphaBeta+ AI需要当前棋局环境")
+        wrapped = GuiEnvAdapter(env)
+        obs = wrapped.raw_observation()
+        action_id = self.agent.select_action(obs, moves, wrapped)
+        return find_move_by_action_id(moves, action_id)
+
+
+@dataclass
+class MCTSPlayer:
+    name: str
+    checkpoint_path: str
+    config_path: Optional[str] = None
+    kind: str = "mcts"
+
+    def __post_init__(self) -> None:
+        self.agent = MCTSAgent(
+            self.checkpoint_path,
+            config_path=self.config_path,
+            device="cpu",
+        )
+        self._search_env = StandardDraughtsEnv()
+
+    def is_human(self) -> bool:
+        return False
+
+    def choose_move(self, moves: Sequence[Move], env: Optional[DraughtsEnv] = None) -> Optional[Move]:
+        if not moves:
+            return None
+        if env is None:
+            raise ValueError("MCTS AI需要当前棋局环境")
+        obs = env.observation()
+        # Mirror the GUI env state into a StandardDraughtsEnv for MCTS search.
+        self._search_env.set_state(
+            squares=list(obs["squares"]),
+            side_to_move=int(obs["side_to_move"]),
+        )
+        action_id = self.agent.select_action(
+            self._search_env.raw_observation(),
+            self._search_env.legal_actions(),
+            self._search_env,
+        )
+        return find_move_by_action_id(moves, action_id)
+
+
+@dataclass
+class GuiEnvAdapter:
+    """Wraps a C-level DraughtsEnv so it exposes the interface expected by
+    materialist / alphabeta / MCTS agents (clone, step, raw_observation,
+    legal_actions)."""
+
+    _env: DraughtsEnv
+
+    def clone(self) -> "GuiEnvAdapter":
+        return GuiEnvAdapter(self._env.clone())
+
+    def step(self, action_id: int):
+        obs, info = self._env.step(action_id)
+        return obs, info["reward"], info["done"], info
+
+    def raw_observation(self) -> Dict[str, object]:
+        return self._env.observation()
+
+    def legal_actions(self) -> List[Move]:
+        return self._env.legal_moves()
 
 
 class BoardView(tk.Canvas):
@@ -272,12 +412,22 @@ class GameController:
         black_kind: str,
         white_kind: str,
         checkpoint_paths: Optional[Dict[int, str]] = None,
+        mcts_config_paths: Optional[Dict[int, str]] = None,
     ) -> None:
         self.cancel_ai_job()
         checkpoint_paths = checkpoint_paths or {}
+        mcts_config_paths = mcts_config_paths or {}
         self.players = {
-            BLACK_SIDE: self._make_player(BLACK_SIDE, black_kind, checkpoint_paths.get(BLACK_SIDE)),
-            WHITE_SIDE: self._make_player(WHITE_SIDE, white_kind, checkpoint_paths.get(WHITE_SIDE)),
+            BLACK_SIDE: self._make_player(
+                BLACK_SIDE, black_kind,
+                checkpoint_paths.get(BLACK_SIDE),
+                mcts_config_paths.get(BLACK_SIDE),
+            ),
+            WHITE_SIDE: self._make_player(
+                WHITE_SIDE, white_kind,
+                checkpoint_paths.get(WHITE_SIDE),
+                mcts_config_paths.get(WHITE_SIDE),
+            ),
         }
         self.ai_paused = False
         self.app.update_pause_button(self.ai_paused)
@@ -511,20 +661,40 @@ class GameController:
     def log_model_players(self) -> None:
         for side in (BLACK_SIDE, WHITE_SIDE):
             player = self.players[side]
-            if getattr(player, "kind", None) == "supervised":
+            kind = getattr(player, "kind", None)
+            if kind == "supervised":
                 self.app.log(
                     f"{player.name} 已加载模型：{Path(player.checkpoint_path).name}",
                     "info",
                 )
+            elif kind == "mcts":
+                cfg = Path(player.config_path).name if player.config_path else "default"
+                self.app.log(
+                    f"{player.name} 已加载模型：{Path(player.checkpoint_path).name}（MCTS 配置：{cfg}）",
+                    "info",
+                )
 
-    def _make_player(self, side: int, kind: str, checkpoint_path: Optional[str] = None):
+    def _make_player(self, side: int, kind: str, checkpoint_path: Optional[str] = None,
+                     mcts_config_path: Optional[str] = None):
         side_label = "黑方" if side == BLACK_SIDE else "白方"
+        if kind == "human":
+            return HumanPlayer(f"{side_label}玩家")
         if kind == "random":
             return RandomPlayer(f"{side_label}随机AI", self.rng)
+        if kind == "material":
+            return MaterialPlayer(f"{side_label}材料AI")
+        if kind == "alphabeta":
+            return AlphaBetaPlayer(f"{side_label}AlphaBeta AI")
+        if kind == "alphabeta_plus":
+            return AlphaBetaPlusPlayer(f"{side_label}AlphaBeta+ AI")
         if kind == "supervised":
             if not checkpoint_path:
                 raise ValueError(f"{side_label}监督模型AI需要选择 checkpoint 文件")
             return SupervisedPlayer(f"{side_label}监督模型AI", checkpoint_path)
+        if kind == "mcts":
+            if not checkpoint_path:
+                raise ValueError(f"{side_label}MCTS AI需要选择 checkpoint 文件")
+            return MCTSPlayer(f"{side_label}MCTS AI", checkpoint_path, mcts_config_path)
         return HumanPlayer(f"{side_label}玩家")
 
     def _select_start(
@@ -555,7 +725,7 @@ class DraughtsApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self._configure_fonts()
-        self.title("BitMind 国际跳棋 - GUI v0")
+        self.title("BitMind 国际跳棋")
         self.minsize(1160, 690)
 
         self.status_vars = {
@@ -809,22 +979,43 @@ class DraughtsApp(tk.Tk):
         buttons = ttk.Frame(frame)
         buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=(12, 0))
 
+        def _needs_checkpoint(kind: str) -> bool:
+            return kind in ("supervised", "mcts")
+
+        def _needs_mcts_config(kind: str) -> bool:
+            return kind == "mcts"
+
         def start_game() -> None:
             black_selected = PLAYER_LABEL_TO_KIND[black_var.get()]
             white_selected = PLAYER_LABEL_TO_KIND[white_var.get()]
             checkpoint_paths: Dict[int, str] = {}
-            if black_selected == "supervised":
-                path = self.ask_checkpoint_path("请选择黑方监督模型 checkpoint", dialog)
-                if path is None:
-                    return
-                checkpoint_paths[BLACK_SIDE] = path
-            if white_selected == "supervised":
-                path = self.ask_checkpoint_path("请选择白方监督模型 checkpoint", dialog)
-                if path is None:
-                    return
-                checkpoint_paths[WHITE_SIDE] = path
+            mcts_config_paths: Dict[int, str] = {}
+
+            for side, kind in ((BLACK_SIDE, black_selected), (WHITE_SIDE, white_selected)):
+                if _needs_checkpoint(kind):
+                    side_label = "黑方" if side == BLACK_SIDE else "白方"
+                    path = self.ask_checkpoint_path(
+                        f"请选择{side_label} {'监督模型' if kind == 'supervised' else 'MCTS'} checkpoint",
+                        dialog,
+                    )
+                    if path is None:
+                        return
+                    checkpoint_paths[side] = path
+
+                if _needs_mcts_config(kind):
+                    side_label = "黑方" if side == BLACK_SIDE else "白方"
+                    cfg_path = self.ask_mcts_config_path(
+                        f"请选择{side_label} MCTS 配置文件（取消则使用默认）",
+                        dialog,
+                    )
+                    if cfg_path is not None:
+                        mcts_config_paths[side] = cfg_path
+
             try:
-                self.controller.start_new_game(black_selected, white_selected, checkpoint_paths)
+                self.controller.start_new_game(
+                    black_selected, white_selected,
+                    checkpoint_paths, mcts_config_paths,
+                )
             except Exception as exc:
                 messagebox.showerror("创建对局失败", str(exc), parent=dialog)
                 return
@@ -852,6 +1043,20 @@ class DraughtsApp(tk.Tk):
             messagebox.showwarning("未选择模型", "请选择 checkpoint 文件后再开始对局。", parent=parent)
             return None
         return path
+
+    def ask_mcts_config_path(self, title: str, parent: tk.Toplevel) -> Optional[str]:
+        config_dir = PROJECT_ROOT / "draughts" / "config"
+        initial_dir = config_dir if config_dir.exists() else PROJECT_ROOT
+        path = filedialog.askopenfilename(
+            parent=parent,
+            title=title,
+            initialdir=str(initial_dir),
+            filetypes=(
+                ("YAML config", "*.yaml *.yml"),
+                ("所有文件", "*"),
+            ),
+        )
+        return path if path else None
 
     def _on_square_click(self, square_id: int) -> None:
         self.controller.handle_square_click(square_id)

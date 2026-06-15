@@ -31,6 +31,7 @@ class ArenaConfig:
     alphabeta_config: Optional[str] = None
     black_checkpoint: Optional[str] = None
     white_checkpoint: Optional[str] = None
+    mcts_config: Optional[str] = None
     device: Optional[str] = None
 
 
@@ -137,6 +138,7 @@ def run_arena(
     alphabeta_config_path: Optional[str] = None,
     black_checkpoint_path: Optional[str] = None,
     white_checkpoint_path: Optional[str] = None,
+    mcts_config_path: Optional[str] = None,
     device: Optional[str] = None,
     opening_random_plies: int = 0,
 ) -> ArenaStats:
@@ -155,6 +157,7 @@ def run_arena(
         material_config_path=material_config_path,
         alphabeta_config_path=alphabeta_config_path,
         supervised_checkpoint_path=black_checkpoint_path,
+        mcts_config_path=mcts_config_path,
         device=device,
     )
     white_seed = None if seed is None else seed + 1
@@ -164,6 +167,7 @@ def run_arena(
         material_config_path=material_config_path,
         alphabeta_config_path=alphabeta_config_path,
         supervised_checkpoint_path=white_checkpoint_path,
+        mcts_config_path=mcts_config_path,
         device=device,
     )
     stats = ArenaStats()
@@ -240,7 +244,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device",
         default=None,
-        help="Device for SupervisedAgent: cpu, cuda, or cuda:0. Defaults to auto.",
+        help="Device for SupervisedAgent/MCTSAgent: cpu, cuda, or cuda:0. Defaults to auto.",
+    )
+    parser.add_argument(
+        "--mcts-config",
+        default=None,
+        help="YAML file for MCTSAgent parameters.",
     )
     args = merge_arena_args(parser.parse_args())
 
@@ -256,10 +265,10 @@ def parse_args() -> argparse.Namespace:
         parser.error("--black supervised requires --black-checkpoint")
     if args.white == "supervised" and not args.white_checkpoint:
         parser.error("--white supervised requires --white-checkpoint")
-    if args.black == "valuesearch" and not args.black_checkpoint:
-        parser.error("--black valuesearch requires --black-checkpoint")
-    if args.white == "valuesearch" and not args.white_checkpoint:
-        parser.error("--white valuesearch requires --white-checkpoint")
+    if args.black == "mcts" and not args.black_checkpoint:
+        parser.error("--black mcts requires --black-checkpoint")
+    if args.white == "mcts" and not args.white_checkpoint:
+        parser.error("--white mcts requires --white-checkpoint")
     return args
 
 
@@ -325,6 +334,7 @@ def main() -> None:
         alphabeta_config_path=args.alphabeta_config,
         black_checkpoint_path=args.black_checkpoint,
         white_checkpoint_path=args.white_checkpoint,
+        mcts_config_path=args.mcts_config,
         device=args.device,
         opening_random_plies=args.opening_random_plies,
     )

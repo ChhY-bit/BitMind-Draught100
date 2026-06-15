@@ -27,7 +27,7 @@ PYTHONPATH=interface:. python3 scripts/selfplay.py \
 | 参数 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `--config` | path | `scripts/config/selfplay.yaml` | 配置文件，CLI 参数覆盖文件中的值 |
-| `--black` | str | `alphabeta` | 黑方 agent：`random`、`material`、`alphabeta`、`supervised` |
+| `--black` | str | `alphabeta` | 黑方 agent：`random`/`material`/`alphabeta`/`alphabeta_plus`/`supervised`/`mcts` |
 | `--white` | str | `alphabeta` | 白方 agent，同上 |
 | `--games` | int | 100 | 生成局数 |
 | `--max-plies` | int | 500 | 每局最大半回合数 |
@@ -38,9 +38,12 @@ PYTHONPATH=interface:. python3 scripts/selfplay.py \
 | `--alphabeta-config` | path | none | AlphaBetaAgent 的 YAML 配置 |
 | `--black-checkpoint` | path | none | 黑方 supervised checkpoint |
 | `--white-checkpoint` | path | none | 白方 supervised checkpoint |
-| `--device` | str | auto | supervised 推理设备：`cpu`、`cuda` |
+| `--device` | str | auto | supervised/mcts 推理设备：`cpu`、`cuda` |
+| `--mcts-config` | path | none | MCTSAgent 的 YAML 配置 |
 | `--append` | flag | off | 追加写入 output 文件 |
 | `--auto-output-name` | flag | on | output 已存在时自动生成 `_001`/`_002` 新文件名 |
+
+MCTS 自博弈会自动将 search visit count 分布作为 `policy_target_probs` 写入 JSONL，无需再跑 `search_improve`。
 
 ---
 
@@ -99,7 +102,8 @@ PYTHONPATH=interface:. python3 scripts/arena.py \
 | `--alphabeta-config` | path | none | AlphaBetaAgent YAML 配置 |
 | `--black-checkpoint` | path | none | 黑方 supervised checkpoint |
 | `--white-checkpoint` | path | none | 白方 supervised checkpoint |
-| `--device` | str | auto | supervised 推理设备 |
+| `--device` | str | auto | supervised/mcts 推理设备 |
+| `--mcts-config` | path | none | MCTSAgent YAML 配置 |
 
 ---
 

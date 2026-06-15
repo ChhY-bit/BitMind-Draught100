@@ -1,137 +1,92 @@
-# CLAUDE.md — AI Agent 工作指南
+# CLAUDE.md — 项目导览
 
-## 项目概述
+## 这是什么
 
-**BitMind-Draught100**：100 格国际跳棋 AI。最终目标是构建一个网络引导 MCTS 搜索的智能体，棋力超越同等计算预算下的纯 AlphaBeta 搜索。
+**BitMind-Draught100**：100 格国际跳棋 AI。用一个叫 `CandidateMoveNet` 的神经网络给 MCTS 搜索提供"棋感"，让它在有限算力下比纯 AlphaBeta 搜索下得更好。
 
-详见 [ROADMAP.md](ROADMAP.md)。
-
-## 当前阶段：Phase 2 — 搜索增强（网络 + MCTS）
-
-Phase 1 已完成。训练好的 `CandidateMoveNet` 基座网络位于 `trainer/checkpoints/candidate_move_net_best.pt`。
-
-### Phase 1 成果速览
-
-| 指标 | 值 |
-|------|-----|
-| 训练数据 | 600 局 selfplay → ~35,000 软标签样本（`data/improved_soft.jsonl`） |
-| 模型架构 | `CandidateMoveNet`：CNN encoder + policy head + value head |
-| Policy accuracy | 75%（best val）~ 86%（final train） |
-| 棋力 | 70:30 胜 `material`；0:100 负 `alphabeta`（greedy 推理，缺搜索） |
-| soft target | `search_improve.py` 输出 `policy_target_probs`，训练用软交叉熵 |
-| 开局随机化 | `selfplay.py` 支持 `--opening-random-plies` |
-
-### Phase 2 目标
-
-实现 `draughts/mcts.py`，用网络引导 MCTS 搜索，使 MCTS+网络 战胜 AlphaBeta depth=3。
-
-**技术要点**：
-- 分支选择：PUCT 公式，prior 来自 `policy_logits`
-- 叶子评估：`value_head` 输出局面价值
-- 搜索返回：visit count 分布（新 policy target）+ 最终 value
-- `env.clone()` 性能是 MCTS 瓶颈，需要关注
-
-### 已有 checkpoint
-
-| 文件 | 说明 |
-|------|------|
-| `trainer/checkpoints/candidate_move_net_best.pt` | best val loss (epoch 13) |
-| `trainer/checkpoints/candidate_move_net_latest.pt` | 最终 epoch |
-
-## 项目架构
+## 项目地图
 
 ```
-engine/         C 规则引擎（只读，棋规的唯一真源）
-interface/      C↔Python ctypes 桥接（只读）
-draughts/       核心 Python 库（env, model, agents, dataset, move_encoding）
-trainer/        训练入口（train_supervised.py）
-scripts/        独立应用脚本（selfplay, search_improve, arena, compare, inspect）
-gui/            Tkinter 棋盘界面
+README.md                 项目总览、环境搭建、从零上手
+ROADMAP.md                技术路线（三阶段方法）
+SPEC.md                   国际跳棋规则
+PROGRESS.md               各模块当前状态
+
+engine/                   C 规则引擎 — 棋规在此，不在此层之上重复实现规则
+interface/                C→Python 桥接 — 编译为 libdraughts.so，Python 用 ctypes 加载
+draughts/                 核心 Python 库
+  ├── env.py                StandardDraughtsEnv（局面管理、走子、克隆）
+  ├── model.py              CandidateMoveNet（CNN 编码器 + policy head + value head）
+  ├── agents.py             所有智能体（6 种，统一通过 make_agent() 创建）
+  ├── mcts.py               MCTS 搜索（PUCT 公式，网络提供先验和叶子评估）
+  ├── move_encoding.py      走法 → 固定维度特征向量
+  ├── dataset.py            JSONL 加载、软标签支持、批处理
+  └── config/               YAML 配置（模型结构、搜索参数、评估权重）
+trainer/                  训练入口（train_supervised.py，硬标签/软标签自动兼容）
+scripts/                  独立应用
+  ├── selfplay.py           对局 → JSONL 数据（支持所有 agent）
+  ├── search_improve.py     AlphaBeta 对已有数据重新打分
+  ├── arena.py              批量对战、统计胜率
+  ├── compare_checkpoints.py  新老 checkpoint 对比、晋升判断
+  └── inspect_dataset.py    数据质量检查
+gui/                      Tkinter 棋盘（人机对弈、AI 观战）
 ```
 
-层间依赖：`scripts/trainer` → `draughts` → `interface` → `engine`
+**层间关系**：`scripts` / `trainer` → `draughts` → `interface` → `engine`（只向下依赖，不跨层）
 
-详见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+## 关键入口
 
-## 数据管线
+| 做什么 | 怎么走 |
+|--------|--------|
+| 搭环境、编译、验证 | `conda env create -f environment.yml && make interface && make all-python-test` |
+| 看棋盘、下棋 | `PYTHONPATH=interface:. python3 gui/simple_gui.py` |
+| 看棋规 | [SPEC.md](SPEC.md) |
+| 训练新网络 | `PYTHONPATH=interface:. python3 trainer/train_supervised.py <data.jsonl> --device cuda` |
+| 评测两个 agent | `PYTHONPATH=interface:. python3 scripts/arena.py --black <a> --white <b> --games 100` |
+| 生成训练数据 | `PYTHONPATH=interface:. python3 scripts/selfplay.py --black <a> --white <b> --output data.jsonl` |
+| 基座网络在哪 | `trainer/checkpoints/candidate_move_net_best.pt` |
+| MCTS 参数在哪 | `draughts/config/mcts.yaml` |
+| 当前网络棋力 | 见 [PROGRESS.md](PROGRESS.md) 的棋力层级图 |
 
-```
-selfplay (depth=2, opening_random_plies=6)
-  → search_improve (depth=3, temperature=100, min_score_margin=20)
-    → train_supervised (自动使用软标签)
-```
-
-## 常用命令
+## 常用命令速查
 
 ```bash
-# 测试
+# 测试（修改代码后必跑）
 make test && make interface-test && make all-python-test
 
-# 数据生成
-PYTHONPATH=interface:. python3 scripts/selfplay.py \
-  --black alphabeta --white alphabeta \
-  --games 600 --opening-random-plies 6 --seed 42 \
-  --output data/selfplay_ab2.jsonl
+# 所有 Python 命令前加
+PYTHONPATH=interface:.
 
-PYTHONPATH=interface:. python3 scripts/search_improve.py data/ \
-  --output data/improved_soft.jsonl \
-  --alphabeta-depth 3 --temperature 100 --min-score-margin 20 --seed 42
+# MCTS 自博弈（一步产出软标签训练数据）
+python3 scripts/selfplay.py --black mcts --white mcts \
+  --black-checkpoint ckpt.pt --white-checkpoint ckpt.pt \
+  --games 2000 --opening-random-plies 6 --device cuda
 
-# 训练
-PYTHONPATH=interface:. python3 trainer/train_supervised.py data/improved_soft.jsonl \
-  --device cuda --resume trainer/checkpoints/candidate_move_net_latest.pt
+# 从头训练（Phase 3 标准做法，不 resume）
+python3 trainer/train_supervised.py data.jsonl --epochs 10 --device cuda
 
-# 评测（arena 测绝对棋力，compare 测两代模型对比）
-PYTHONPATH=interface:. python3 scripts/arena.py \
-  --black supervised --white alphabeta \
-  --black-checkpoint trainer/checkpoints/candidate_move_net_best.pt \
-  --games 100 --opening-random-plies 4 --device cuda
+# MCTS vs AlphaBeta 评测
+python3 scripts/arena.py --black mcts --white alphabeta_plus \
+  --black-checkpoint ckpt.pt --games 100 --device cuda
 ```
 
-## 代码规范
+## 给用户当导游
 
-### Python
-- Python 3.10+
-- 新模块优先放入 `draughts/`（库）或 `scripts/`（应用）
-- `trainer/` 只放训练循环，不放数据生成或评测
-- 所有 CLI 脚本用 argparse，配置用 YAML，CLI 参数覆盖 YAML
-- `from __future__ import annotations` 在所有文件中
-- 类型标注使用 `Optional`、`Sequence` 等 typing 泛型
+被问到项目相关问题时，用以下信息作答：
 
-### C
-- C11，`-Wall -Wextra -Wpedantic -Werror`
-- 规则逻辑只在 `engine/src/` 中
-- 所有公开函数检查 NULL 参数，返回错误码
-- 头文件在 `engine/include/`
+- **"能下棋吗"** → 能。编译后 `python3 gui/simple_gui.py` 即可打开棋盘界面。
+- **"怎么训练自己的 AI"** → 先跑 selfplay 生成数据，再跑 train_supervised 训练网络。
+- **"现在棋力怎么样"** → 看 PROGRESS.md 的棋力层级图，MCTS+网络已能稳定对抗 AlphaBeta depth=2。
+- **"怎么让它变更强"** → Phase 3 自博弈闭环：网络越强 → MCTS 越准 → 生成数据越好 → 训练出新网络更强 → 循环。
+- **"规则是什么"** → 国际跳棋，10×10 棋盘，强制吃子、最多吃子、升王。详见 SPEC.md。
+- **"依赖重吗"** → 极轻。唯一外部依赖是 PyTorch，其他全部标准库。
+- **"各个文档的关系"** → README 是总入口，SPEC 是规则，ROADMAP 是方法路线，PROGRESS 是当前状态，各子目录 README 是模块手册。
 
-### 测试
-- 修改核心逻辑必须跑对应测试
-- `make test` — C 引擎
-- `make interface-test` — C↔Python 接口
-- `make draughts-test` — 核心库
-- `make trainer-test` — 训练器
-- `make scripts-test` — 脚本
-- `make all-python-test` — 全部 Python 测试
+## 写代码时的约定
 
-## 约束
-
-- **不引入大型第三方库**。唯一外部依赖是 `torch`。
-- **不修改 engine/ 和 interface/ 的公共 API**。它们是稳定的底层。
-- **不删除已有功能的文件**，除非明确讨论过。
-- **修改后必须更新相关 README** 和 `PROGRESS.md`。
-- 生成新文件时说明理由和用途。
-- 函数和接口保持兼容。
-
-## 工作流程
-
-1. 阅读 [ROADMAP.md](ROADMAP.md) 了解当前阶段和长期方向
-2. 阅读 `PROGRESS.md` 了解最新状态
-3. 修改代码
-4. 运行 `make test && make interface-test && make all-python-test`
-5. 更新 `PROGRESS.md`
-
-## 无把握时
-
-- 不确定需求时先追问，一次只问一个问题
-- 给出可能的选项，而非开放式提问
-- 超过 10 个疑问仍未澄清的，汇总列出，先做有把握的部分
+- Python 3.10+，文件头加 `from __future__ import annotations`
+- 配置用 YAML，CLI 参数覆盖 YAML 默认值
+- 新功能放 `draughts/`（可复用库）或 `scripts/`（一次性应用）
+- `engine/` 和 `interface/` 是稳定层，只读不改
+- 不引入 PyTorch 以外的第三方库
+- 改完代码就跑测试，测试通过再提交

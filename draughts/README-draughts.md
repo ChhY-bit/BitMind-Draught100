@@ -13,9 +13,10 @@
 | 模块 | 职责 | 关键导出 |
 |---|---|---|
 | `env.py` | 封装 C 引擎，提供训练环境 | `StandardDraughtsEnv`, `encode_observation` |
-| `move_encoding.py` | 候选动作 → 45 维特征向量 | `encode_legal_moves`, `MOVE_FEATURE_DIM` |
+| `move_encoding.py` | 候选动作 → 45 维特征向量 | `encode_legal_moves`, `move_to_dict`, `MOVE_FEATURE_DIM` |
 | `model.py` | 神经网络定义 | `CandidateMoveNet`, `ModelConfig`, `load_model_config` |
-| `agents.py` | 所有智能体类 | 7 个 Agent 类, `make_agent`, `available_agents` |
+| `agents.py` | 所有智能体类 | 6 个 Agent 类, `make_agent`, `available_agents` |
+| `mcts.py` | MCTS 搜索（PUCT + 网络引导） | `mcts_search`, `MCTSConfig`, `MCTSNode`, `MCTSResult` |
 | `dataset.py` | JSONL 数据加载与批处理 | `DraughtsJsonlDataset`, `collate_batch`, `to_torch_batch` |
 
 ## 依赖层次
@@ -97,7 +98,9 @@ action_id = agent.select_action(observation, legal_actions, env)
 | `RandomAgent` | `random` | 随机选择合法动作 |
 | `MaterialAgent` | `material` | 一步试走，材料评估 |
 | `AlphaBetaAgent` | `alphabeta` | Alpha-Beta 搜索（深度通过 config 调整） |
+| `AlphaBetaAgent` | `alphabeta_plus` | Alpha-Beta depth=3（最强手工基线） |
 | `SupervisedAgent` | `supervised` | 加载 `CandidateMoveNet` checkpoint，greedy 选择 |
+| `MCTSAgent` | `mcts` | MCTS + PUCT + 网络引导搜索 |
 
 ### `draughts.dataset`
 
@@ -120,6 +123,7 @@ loader = DataLoader(dataset, batch_size=32, collate_fn=collate_batch)
 | `alphabeta.yaml` | `agents.py` | AlphaBeta 搜索深度与评估权重 |
 | `alphabeta_plus.yaml` | `agents.py` | 更深搜索配置（depth=3） |
 | `material.yaml` | `agents.py` | 材料评估参数 |
+| `mcts.yaml` | `mcts.py` | MCTS 搜索超参数（sims, c_puct, temperature, dirichlet） |
 
 ## 测试
 

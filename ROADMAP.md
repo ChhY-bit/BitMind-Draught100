@@ -33,7 +33,7 @@
 
 ---
 
-### Phase 2：搜索增强（网络 + MCTS）← 当前阶段
+### Phase 2：搜索增强（网络 + MCTS）✅ 已完成
 
 **目标**：用网络引导 MCTS，推理棋力超越纯 AlphaBeta。
 
@@ -55,7 +55,8 @@
 | `draughts/model.py` | 网络需同时输出 policy_logits + value | ✅ 已满足 |
 | `draughts/env.py` | `clone()` 性能可能成为 MCTS 瓶颈 | 需关注 |
 | `trainer/checkpoints/candidate_move_net_best.pt` | Phase 1 训练的基座网络 | ✅ 可用 |
-| 新模块 `draughts/mcts.py` | MCTS 搜索实现 | 待实现 |
+| 新模块 `draughts/mcts.py` | MCTS 搜索实现 | ✅ 已实现 |
+| MCTS 自博弈软标签 | `selfplay.py` 直接写入 `policy_target_probs` | ✅ 已实现 |
 
 ---
 
@@ -84,7 +85,7 @@
             Phase 1        Phase 2        Phase 3
 
 网络        ✅ policy+value  ✅ 同上        ✅ 更深/更宽
-搜索        ❌ 纯AlphaBeta   ✅ MCTS+网络    ✅ MCTS+更强网络
+搜索        ❌ 纯AlphaBeta   ✅ MCTS+网络    ✅ MCTS+更强网络（待规模化）
 Teacher     AlphaBeta       AlphaBeta+MCTS  上一轮自己
 数据来源    搜索蒸馏         搜索+自博弈     纯自博弈
 评测        胜率对比         胜率对比        胜率对比+Elo
@@ -110,7 +111,7 @@ Teacher     AlphaBeta       AlphaBeta+MCTS  上一轮自己
 |--------|------|---------|------|
 | M1 | Phase 1 | 网络对 AlphaBeta depth=3 胜率 > 30% | —（跳过，greedy 推理难达） |
 | M2 | Phase 1 | 训练出可用基座网络，进入 Phase 2 | ✅ 已完成 |
-| M3 | Phase 2 | MCTS+网络 对 AlphaBeta depth=2 胜率 > 50% | 待评测 |
-| M4 | Phase 2 | MCTS+网络 对 AlphaBeta depth=3 胜率 > 50% | 待评测 |
-| M5 | Phase 3 | 自博弈迭代 1 轮晋升成功 | — |
+| M3 | Phase 2 | MCTS+网络 对 AlphaBeta depth=2 胜率 > 50% | 接近（80sims≈31%，待加 sims） |
+| M4 | Phase 2 | MCTS+网络 对 AlphaBeta depth=3 胜率 > 50% | 未达（80sims≈20%，需更多 sims） |
+| M5 | Phase 3 | 自博弈迭代 1 轮晋升成功 | 框架就绪 |
 | M6 | Phase 3 | 自博弈迭代 3 轮以上，棋力持续上升 | — |

@@ -5,7 +5,7 @@ build/
 __pycache__/
 *.py[cod]
 
-# Compiled shared libraries (kept under build/, but also catch stray ones)
+# Compiled shared libraries
 *.so
 
 # Virtual environments
@@ -18,8 +18,12 @@ env/
 *.pth
 trainer/checkpoints/
 
-# Generated training data (can grow to GBs)
+# Generated training data
 data/
+
+# Training logs
+trainer/checkpoints/training_log_*.csv
+trainer/checkpoints/training_time.json
 
 # IDE / editor
 .vscode/
@@ -31,8 +35,8 @@ data/
 # macOS
 .DS_Store
 
-# Claude Code assistant
+# Claude Code
 .claude/
 
-# Session scratch files
+# Session scratch
 resume.txt
