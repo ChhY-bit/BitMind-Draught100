@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 import random
+import shutil
+import subprocess
 import sys
 import tkinter as tk
 from dataclasses import dataclass
@@ -25,6 +28,133 @@ from draughts.agents import (  # noqa: E402
 )
 from draughts.env import EncodedObservationAdapter, StandardDraughtsEnv, encode_observation  # noqa: E402
 from draughts.move_encoding import coord_to_square, square_to_coord  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
+# CJK font registration (Linux Tkinter workaround)
+# ---------------------------------------------------------------------------
+
+# Phase 1: preferred modern CJK fonts — checked first
+_PREFERRED_CJK_FONTS = [
+    'droid sans fallback',   # bundled font registered via X11 (Linux)
+    'Microsoft YaHei',       # Windows
+    'SimHei',                # Windows
+    'PingFang SC',           # macOS
+    'Heiti SC',              # macOS
+]
+
+# Phase 2: X11 core CJK fonts — used as fallback on Linux only
+_FALLBACK_CJK_FONTS = [
+    'song ti',               # 宋体
+    'fangsong ti',           # 仿宋
+]
+
+# Track the X11 font directory we registered, so we can clean up on exit.
+_registered_font_dir: Optional[str] = None
+
+
+def _get_tk_font_families(root: tk.Tk) -> set:
+    """Return the set of font family names visible to Tk."""
+    try:
+        return set(root.tk.call('font', 'families'))
+    except Exception:
+        return set()
+
+
+def _register_bundled_cjk_font() -> Optional[str]:
+    """Register the bundled CJK font into the X11 core font path (Linux only).
+
+    Returns the X11 font family name on success, or None on failure.
+    """
+    global _registered_font_dir
+
+    if not sys.platform.startswith('linux'):
+        return None
+
+    bundled_ttf = os.path.join(
+        str(PROJECT_ROOT), 'assets', 'fonts', 'DroidSansFallbackFull.ttf',
+    )
+    if not os.path.exists(bundled_ttf):
+        return None
+
+    font_dir = os.path.join(str(Path.home()), '.bitmind_draughts', 'fonts')
+    os.makedirs(font_dir, exist_ok=True)
+
+    dest = os.path.join(font_dir, os.path.basename(bundled_ttf))
+    if not os.path.exists(dest):
+        try:
+            shutil.copy2(bundled_ttf, dest)
+        except OSError:
+            return None
+
+    # Generate X11 font metadata (fonts.dir / fonts.scale)
+    try:
+        subprocess.run(
+            ['mkfontscale', font_dir],
+            check=True, capture_output=True, timeout=10,
+        )
+        subprocess.run(
+            ['mkfontdir', font_dir],
+            check=True, capture_output=True, timeout=10,
+        )
+    except Exception:
+        return None
+
+    # Add to X server font path
+    try:
+        subprocess.run(
+            ['xset', '+fp', font_dir],
+            check=True, capture_output=True, timeout=10,
+        )
+        subprocess.run(
+            ['xset', 'fp', 'rehash'],
+            check=True, capture_output=True, timeout=10,
+        )
+    except Exception:
+        return None
+
+    _registered_font_dir = font_dir
+
+    # Parse fonts.dir to extract the X11 font family name
+    fonts_dir_file = os.path.join(font_dir, 'fonts.dir')
+    try:
+        with open(fonts_dir_file) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line[0].isdigit():
+                    continue
+                # Format: filename<space>XLFD
+                idx = line.find(' -')
+                if idx < 0:
+                    continue
+                xlfd = line[idx + 1:].strip()
+                fields = xlfd.split('-')
+                if len(fields) >= 3:
+                    # fields[0]='', fields[1]=foundry, fields[2]=family
+                    return fields[2]
+    except Exception:
+        pass
+
+    return None
+
+
+def _unregister_bundled_cjk_font() -> None:
+    """Remove our font directory from the X11 font path (best-effort)."""
+    global _registered_font_dir
+    if _registered_font_dir is None:
+        return
+    try:
+        subprocess.run(
+            ['xset', '-fp', _registered_font_dir],
+            capture_output=True, timeout=5,
+        )
+        subprocess.run(
+            ['xset', 'fp', 'rehash'],
+            capture_output=True, timeout=5,
+        )
+    except Exception:
+        pass
+    _registered_font_dir = None
 
 
 BOARD_SIZE = 10
@@ -727,6 +857,7 @@ class DraughtsApp(tk.Tk):
         self._configure_fonts()
         self.title("BitMind 国际跳棋")
         self.minsize(1160, 690)
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.status_vars = {
             "mode": tk.StringVar(value="-"),
@@ -742,16 +873,57 @@ class DraughtsApp(tk.Tk):
         self.controller = GameController(self)
         self.after(0, self.controller.open_new_game_dialog)
 
-    @staticmethod
-    def _configure_fonts() -> None:
-        """Set up CJK-friendly default fonts so Chinese text renders clearly."""
-        preferred = ("Noto Sans CJK SC", "WenQuanYi Micro Hei", "Microsoft YaHei", "TkDefaultFont")
-        available = {font.Font(family=f).actual("family") for f in font.families()}
-        chosen = next((f for f in preferred if f in available), "TkDefaultFont")
+    def _on_close(self) -> None:
+        """Clean up resources before destroying the window."""
+        self.controller.cancel_ai_job()
+        self.destroy()
+        _unregister_bundled_cjk_font()
 
-        for name in ("TkDefaultFont", "TkTextFont", "TkHeadingFont", "TkFixedFont"):
+    def _configure_fonts(self) -> None:
+        """Set up CJK-friendly default fonts so Chinese text renders clearly.
+
+        Strategy (platform-aware):
+        1. Check if a modern CJK font is already visible to Tk.
+        2. On Linux, register the bundled DroidSansFallbackFull.ttf into X11.
+        3. Fall back to X11 core CJK fonts (song ti / fangsong ti).
+        4. Absolute fallback: 'song ti' (available on virtually all Linux desktops).
+        """
+        families = _get_tk_font_families(self)
+
+        # Tier 1: check for a modern CJK font already visible to Tk
+        cjk_family: Optional[str] = None
+        for name in _PREFERRED_CJK_FONTS:
+            if name in families:
+                cjk_family = name
+                break
+
+        # Tier 2: on Linux, try to register the bundled font into X11
+        if cjk_family is None and sys.platform.startswith('linux'):
+            registered = _register_bundled_cjk_font()
+            if registered:
+                # Refresh Tk's font list after xset rehash
+                families = _get_tk_font_families(self)
+                for name in _PREFERRED_CJK_FONTS:
+                    if name in families:
+                        cjk_family = name
+                        break
+
+        # Tier 3: X11 core CJK fallback
+        if cjk_family is None:
+            for name in _FALLBACK_CJK_FONTS:
+                if name in families:
+                    cjk_family = name
+                    break
+
+        # Absolute fallback
+        if cjk_family is None:
+            cjk_family = 'song ti'
+
+        # Apply the chosen family to all Tk built-in fonts
+        for name in ('TkDefaultFont', 'TkTextFont', 'TkHeadingFont',
+                     'TkFixedFont', 'TkMenuFont'):
             try:
-                font.nametofont(name).configure(family=chosen, size=10)
+                font.nametofont(name).configure(family=cjk_family)
             except Exception:
                 pass
 

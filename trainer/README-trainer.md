@@ -28,6 +28,9 @@ PYTHONPATH=interface:. python3 trainer/train_supervised.py data \
 | `--checkpoint-dir` | path | `trainer/checkpoints` | checkpoint 保存目录 |
 | `--resume` | path | none | 从此 checkpoint 继续训练 |
 | `--device` | str | auto | 训练设备：`cpu`、`cuda` |
+| `--epochs` | int | (YAML 中的值) | 覆盖配置文件中的训练轮数 |
+| `--batch-size` | int | (YAML 中的值) | 覆盖配置文件中的批次大小 |
+| `--lr` | float | (YAML 中的值) | 覆盖配置文件中的学习率 |
 | `--save-every-epoch` | flag | off | 每个 epoch 都保存 checkpoint |
 | `--source` | str | none | 数据源权重：`路径:policy_w:value_w:标签`（可重复） |
 | `--source-config` | path | none | 数据源权重 YAML 配置文件 |
@@ -82,9 +85,14 @@ PYTHONPATH=interface:. python3 trainer/train_supervised.py \
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
+| `epochs` | 3 | 训练轮数 |
+| `batch_size` | 64 | 批次大小 |
 | `learning_rate` | 0.001 | 初始学习率 |
-| `epochs` | 10 | 训练轮数 |
-| `batch_size` | 32 | 批次大小 |
-| `value_loss_weight` | 0.5 | value loss 权重 |
+| `value_loss_weight` | 0.25 | value loss 权重 |
 | `validation_split` | 0.1 | 验证集比例 |
-| `save_every_epoch` | false | 是否保存每个 epoch 的 checkpoint |
+| `seed` | 4 | 随机种子 |
+| `shuffle` | 1 | 是否打乱训练样本（1=是, 0=否） |
+| `log_interval` | 20 | 每隔多少 batch 打印日志 |
+| `num_workers` | 0 | DataLoader 子进程数 |
+
+以上参数均可被命令行 `--epochs`、`--batch-size`、`--lr` 覆盖。

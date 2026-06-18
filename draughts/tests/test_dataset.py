@@ -31,19 +31,19 @@ class DatasetTests(unittest.TestCase):
 
             dataset = DraughtsJsonlDataset([str(output)])
 
-        self.assertGreater(len(dataset), 0)
-        item = dataset[0]
-        self.assertEqual(len(item["observation"]), 6)
-        self.assertEqual(len(item["action_mask"]), 512)
-        self.assertIn(item["value_target"], {-1, 0, 1})
-        self.assertIsInstance(item["policy_target"], int)
-        self.assertGreater(len(item["move_features"]), 0)
-        self.assertEqual(len(item["move_features"][0]), MOVE_FEATURE_DIM)
-        self.assertIsInstance(item["policy_target_index"], int)
-        self.assertEqual(item["selected_policy_prob"], 1.0)
-        self.assertEqual(item["behavior_temperature"], 1.0)
-        self.assertEqual(item["behavior_value"], 0.0)
-        self.assertIn("game_id", item["metadata"])
+            self.assertGreater(len(dataset), 0)
+            item = dataset[0]
+            self.assertEqual(len(item["observation"]), 6)
+            self.assertEqual(len(item["action_mask"]), 512)
+            self.assertIn(item["value_target"], {-1, 0, 1})
+            self.assertIsInstance(item["policy_target"], int)
+            self.assertGreater(len(item["move_features"]), 0)
+            self.assertEqual(len(item["move_features"][0]), MOVE_FEATURE_DIM)
+            self.assertIsInstance(item["policy_target_index"], int)
+            self.assertEqual(item["selected_policy_prob"], 1.0)
+            self.assertEqual(item["behavior_temperature"], 1.0)
+            self.assertEqual(item["behavior_value"], 0.0)
+            self.assertIn("game_id", item["metadata"])
 
     def test_dataset_applies_source_weights(self):
         with TemporaryDirectory() as tmp_dir:

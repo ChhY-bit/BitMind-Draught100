@@ -3,10 +3,47 @@ import random
 from tempfile import TemporaryDirectory
 from pathlib import Path
 
+import torch
+
 from arena import ArenaStats, apply_random_opening, load_arena_config, play_game, run_arena
 from draughts.agents import RandomAgent
 from draughts.env import StandardDraughtsEnv
-from test_agents import create_zero_supervised_checkpoint
+from draughts.model import CandidateMoveNet, ModelConfig
+
+
+def create_zero_supervised_checkpoint(directory: Path) -> Path:
+    """Create a tiny zero-initialised checkpoint for integration tests."""
+    config = ModelConfig(
+        conv_channels=4,
+        conv_layers=1,
+        board_feature_dim=8,
+        move_embedding_dim=6,
+        hidden_dim=5,
+    )
+    model = CandidateMoveNet(config=config)
+    for parameter in model.parameters():
+        torch.nn.init.constant_(parameter, 0.0)
+
+    path = directory / "supervised.pt"
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "model_config": {
+                "board_channels": config.board_channels,
+                "board_size": config.board_size,
+                "conv_channels": config.conv_channels,
+                "conv_layers": config.conv_layers,
+                "conv_kernel_size": config.conv_kernel_size,
+                "conv_padding": config.conv_padding,
+                "board_feature_dim": config.board_feature_dim,
+                "move_feature_dim": config.move_feature_dim,
+                "move_embedding_dim": config.move_embedding_dim,
+                "hidden_dim": config.hidden_dim,
+            },
+        },
+        path,
+    )
+    return path
 
 
 class ArenaTests(unittest.TestCase):

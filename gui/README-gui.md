@@ -63,6 +63,21 @@ gui/simple_gui.py
 
 GUI 不实现棋规——所有动作通过 `action_id → env.step(action_id)` 交给 C 引擎执行。悔棋使用动作历史重放实现。
 
+## 中文字体（Linux）
+
+Linux 下 Tkinter 默认只能使用 X11 核心字体（约 20 个），这些字体不包含 CJK 字形，导致中文显示为方框。GUI 启动时会自动检测并注册项目捆绑的 `DroidSansFallbackFull.ttf`（位于 `assets/fonts/`），注册过程依赖 `mkfontscale` 和 `xset` 工具。
+
+**可选依赖**（绝大多数 Linux 桌面发行版已预装）：
+
+```bash
+# Debian/Ubuntu
+sudo apt install xfonts-utils
+```
+
+如果 `xfonts-utils` 未安装，GUI 会自动回退到 X11 核心宋体（`song ti`），中文仍可正常显示，只是字形较旧。
+
+字体注册通过 `xset +fp` 实现，仅在当前 X 会话有效，注销后自动还原。
+
 ## 限制
 
 - 仅支持单机对局，不支持网络对战

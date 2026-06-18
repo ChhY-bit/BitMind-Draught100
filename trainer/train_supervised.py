@@ -52,6 +52,7 @@ def main() -> None:
     args = parse_args()
     print(f"supervised: loading train config from {args.config}", flush=True)
     config = load_supervised_config(args.config)
+    config = apply_cli_overrides(config, args)
     print(f"supervised: loading model config from {args.model_config}", flush=True)
     model_config = load_model_config(args.model_config)
     checkpoint_dir = Path(args.checkpoint_dir)
@@ -229,10 +230,51 @@ def parse_args() -> argparse.Namespace:
         metavar="PATH:POLICY_WEIGHT:VALUE_WEIGHT[:NAME]",
         help="Add one weighted data source. Can be repeated.",
     )
+    parser.add_argument(
+        "--epochs", type=int, default=None,
+        help="Number of training epochs (overrides config file).",
+    )
+    parser.add_argument(
+        "--batch-size", type=int, default=None,
+        help="Mini-batch size (overrides config file).",
+    )
+    parser.add_argument(
+        "--lr", type=float, default=None,
+        help="Learning rate (overrides config file).",
+    )
     args = parser.parse_args()
     if not args.data and not args.source_config and not args.source:
         parser.error("at least one data path, --source-config, or --source is required")
     return args
+
+
+def apply_cli_overrides(config: SupervisedConfig, args: argparse.Namespace) -> SupervisedConfig:
+    """Override SupervisedConfig fields with any non-None CLI values.
+
+    Follows the same pattern as merge_selfplay_args() in scripts/selfplay.py.
+    """
+    overrides: dict[str, object] = {}
+    if args.epochs is not None:
+        overrides["epochs"] = args.epochs
+    if args.batch_size is not None:
+        overrides["batch_size"] = args.batch_size
+    if args.lr is not None:
+        overrides["learning_rate"] = args.lr
+
+    if not overrides:
+        return config
+
+    values = asdict(config)
+    values.update(overrides)
+    merged = SupervisedConfig(**values)
+    validate_supervised_config(merged)
+    if args.epochs is not None:
+        print(f"supervised: CLI override epochs={args.epochs}", flush=True)
+    if args.batch_size is not None:
+        print(f"supervised: CLI override batch_size={args.batch_size}", flush=True)
+    if args.lr is not None:
+        print(f"supervised: CLI override lr={args.lr}", flush=True)
+    return merged
 
 
 def resolve_data_sources(

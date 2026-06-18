@@ -111,7 +111,7 @@ dataset = DraughtsJsonlDataset(["data/file1.jsonl", "data/file2.jsonl"])
 loader = DataLoader(dataset, batch_size=32, collate_fn=collate_batch)
 ```
 
-支持数据源权重（`--source` 或 `--source-config`），可按来源分别设置 policy/value loss 权重。
+`DraughtsJsonlDataset` 采用文件偏移量索引实现懒加载——构建时只扫描 JSONL 行边界，样本在 `__getitem__` 时才从磁盘读取，内存占用与样本数量而非样本总大小成正比。支持数据源权重（`--source` 或 `--source-config`），可按来源分别设置 policy/value loss 权重。
 
 ## 配置
 
