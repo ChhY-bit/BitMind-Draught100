@@ -14,7 +14,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Subset
 
-from draughts.dataset import DataSource, DraughtsJsonlDataset, collate_batch, to_torch_batch
+from draughts.dataset import DataSource, DraughtsJsonlDataset, collate_batch
 from draughts.model import CandidateMoveNet, DEFAULT_MODEL_CONFIG_PATH, load_model_config
 
 
@@ -469,6 +469,8 @@ def make_loader(
         shuffle=bool(config.shuffle) if training else False,
         num_workers=config.num_workers,
         collate_fn=collate_batch,
+        pin_memory=True,
+        prefetch_factor=4,
         generator=generator,
     )
 
@@ -484,7 +486,7 @@ def train_one_epoch(
     model.train()
     totals = MetricTotals()
     for batch_index, raw_batch in enumerate(loader, start=1):
-        batch = move_batch_to_device(to_torch_batch(raw_batch), device)
+        batch = move_batch_to_device(raw_batch, device)
         output = model(batch["observation"], batch["move_features"], batch["move_mask"])
         loss, policy_loss, value_loss = compute_loss(output, batch, config.value_loss_weight)
 
@@ -514,7 +516,7 @@ def evaluate(
     totals = MetricTotals()
     with torch.no_grad():
         for raw_batch in loader:
-            batch = move_batch_to_device(to_torch_batch(raw_batch), device)
+            batch = move_batch_to_device(raw_batch, device)
             output = model(batch["observation"], batch["move_features"], batch["move_mask"])
             loss, policy_loss, value_loss = compute_loss(output, batch, config.value_loss_weight)
             totals.update(output, batch, loss, policy_loss, value_loss)

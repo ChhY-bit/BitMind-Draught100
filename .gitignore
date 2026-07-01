@@ -40,3 +40,7 @@ trainer/checkpoints/training_time.json
 
 # Session scratch
 resume.txt
+
+# Downloaded installers
+Miniconda*.sh
+Anaconda*.sh

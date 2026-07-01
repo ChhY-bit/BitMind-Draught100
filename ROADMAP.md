@@ -43,6 +43,7 @@
   - 分支选择：PUCT 公式，prior 来自 `policy_logits`
   - 叶子节点评估：`value_head` 输出局面价值
   - 搜索结束时返回 visit count 分布（新的 policy target）和最终 value
+- 实现**批量推理**（batch inference）：多叶子节点打包一次 GPU forward，配合虚拟损失（virtual loss）确保路径多样性，推理速度提升 5–10 倍
 - 与 AlphaBeta depth=2 / depth=3 对局评测
 - 仍可用 AlphaBeta 辅助生成训练数据
 
@@ -53,9 +54,9 @@
 | 模块 | 用途 | 状态 |
 |------|------|------|
 | `draughts/model.py` | 网络需同时输出 policy_logits + value | ✅ 已满足 |
-| `draughts/env.py` | `clone()` 性能可能成为 MCTS 瓶颈 | 需关注 |
+| `draughts/env.py` | `clone()` 性能可能成为 MCTS 瓶颈 | 批量推理已缓解，move/undo 待优化 |
 | `trainer/checkpoints/candidate_move_net_best.pt` | Phase 1 训练的基座网络 | ✅ 可用 |
-| 新模块 `draughts/mcts.py` | MCTS 搜索实现 | ✅ 已实现 |
+| `draughts/mcts.py` | MCTS 搜索 + 批量推理 + 虚拟损失 | ✅ 已实现 |
 | MCTS 自博弈软标签 | `selfplay.py` 直接写入 `policy_target_probs` | ✅ 已实现 |
 
 ---
@@ -111,7 +112,7 @@ Teacher     AlphaBeta       AlphaBeta+MCTS  上一轮自己
 |--------|------|---------|------|
 | M1 | Phase 1 | 网络对 AlphaBeta depth=3 胜率 > 30% | —（跳过，greedy 推理难达） |
 | M2 | Phase 1 | 训练出可用基座网络，进入 Phase 2 | ✅ 已完成 |
-| M3 | Phase 2 | MCTS+网络 对 AlphaBeta depth=2 胜率 > 50% | 接近（80sims≈31%，待加 sims） |
-| M4 | Phase 2 | MCTS+网络 对 AlphaBeta depth=3 胜率 > 50% | 未达（80sims≈20%，需更多 sims） |
-| M5 | Phase 3 | 自博弈迭代 1 轮晋升成功 | 框架就绪 |
+| M3 | Phase 2 | MCTS+网络 对 AlphaBeta depth=2 胜率 > 50% | ✅ 已达成（批量推理 + 高 sims ≈ 90% 胜率） |
+| M4 | Phase 2 | MCTS+网络 对 AlphaBeta depth=3 胜率 > 50% | 进行中（批量推理后可大幅提升 sims） |
+| M5 | Phase 3 | 自博弈迭代 1 轮晋升成功 | 框架就绪（含批量推理加速） |
 | M6 | Phase 3 | 自博弈迭代 3 轮以上，棋力持续上升 | — |

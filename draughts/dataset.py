@@ -34,14 +34,21 @@ class _SampleIndex:
 
 def _build_sample_index(
     sources: Sequence[DataSource],
-    validate: bool = True,
-) -> list[_SampleIndex]:
-    """Scan JSONL files and record byte offsets for lazy random access.
+    validate: bool = False,
+    cache_in_memory: bool = True,
+) -> tuple[list[_SampleIndex], list[dict[str, object]] | None]:
+    """Scan JSONL files and record byte offsets for random access.
 
-    Validates each sample during the scan when *validate* is True, so
-    bad data is caught at construction time rather than mid-training.
+    When *validate* is True every sample is fully parsed and checked
+    (useful for first-time data inspection).  When *cache_in_memory* is
+    True the raw parsed JSON dicts are kept so that ``__getitem__`` can
+    skip the disk read entirely.
+
+    Returns ``(index, cache)`` where *cache* is a list of pre-parsed
+    sample dicts when *cache_in_memory* is True, or ``None`` otherwise.
     """
     index: list[_SampleIndex] = []
+    cache: list[dict[str, object]] | None = [] if cache_in_memory else None
     for source_index, source in enumerate(sources):
         validate_data_source(source)
         for file_path in resolve_jsonl_files([source.path]):
@@ -54,19 +61,26 @@ def _build_sample_index(
                     line_str = line.decode('utf-8').strip()
                     if not line_str:
                         continue
-                    if validate:
+
+                    sample: dict[str, object] | None = None
+                    if validate or cache_in_memory:
                         sample = json.loads(line_str)
                         if not isinstance(sample, dict):
                             raise ValueError(
                                 f"sample must be a JSON object: {file_path}:{offset}"
                             )
+                    if validate and sample is not None:
                         validate_training_sample(sample, len(index))
+
+                    if cache is not None and sample is not None:
+                        cache.append(sample)
+
                     index.append(_SampleIndex(
                         file_path=str(file_path),
                         byte_offset=offset,
                         source_index=source_index,
                     ))
-    return index
+    return index, cache
 
 
 def resolve_jsonl_files(paths: Sequence[str]) -> List[Path]:
@@ -116,32 +130,58 @@ def iter_weighted_jsonl_samples(sources: Sequence[DataSource]) -> Iterator[Dict[
 
 
 class DraughtsJsonlDataset:
-    """Map-style dataset backed by on-disk JSONL files with lazy loading.
+    """Map-style dataset backed by on-disk JSONL files.
 
-    An index of ``(file_path, byte_offset, source_index)`` tuples is
-    built at construction time so individual samples can be read from
-    disk on demand via ``__getitem__``.  This keeps memory usage
-    proportional to the number of samples rather than their total size.
+    By default samples are pre-loaded into memory during construction
+    (``cache_in_memory=True``) so that ``__getitem__`` incurs no disk
+    I/O or JSON parsing.  Set ``cache_in_memory=False`` for huge
+    datasets that do not fit in RAM; in that mode each ``__getitem__``
+    reads its line from disk on demand.
 
-    Behaviour is otherwise identical to the previous eager-loading
-    implementation — ``len(dataset)``, random-access indexing, and
-    ``DataLoader`` integration all work as before.
+    Validation is opt-in via ``validate=True`` (or the ``.validate()``
+    method) — useful for first-time data inspection but skipped by
+    default to keep construction fast.
     """
 
-    def __init__(self, paths: Sequence[str], validate: bool = True) -> None:
+    def __init__(
+        self,
+        paths: Sequence[str],
+        validate: bool = False,
+        cache_in_memory: bool = True,
+    ) -> None:
         self.sources = [DataSource(path=str(path)) for path in paths]
-        self._index = _build_sample_index(self.sources, validate=validate)
+        self._index, self._cache = _build_sample_index(
+            self.sources, validate=validate, cache_in_memory=cache_in_memory,
+        )
 
     @classmethod
     def from_sources(
         cls,
         sources: Sequence[DataSource],
-        validate: bool = True,
+        validate: bool = False,
+        cache_in_memory: bool = True,
     ) -> "DraughtsJsonlDataset":
         dataset = cls.__new__(cls)
         dataset.sources = list(sources)
-        dataset._index = _build_sample_index(dataset.sources, validate=validate)
+        dataset._index, dataset._cache = _build_sample_index(
+            dataset.sources, validate=validate, cache_in_memory=cache_in_memory,
+        )
         return dataset
+
+    def validate(self) -> list[str]:
+        """Validate all cached (or on-disk) samples and return error messages.
+
+        Call this explicitly when you have new data and want to catch
+        malformed samples before training.
+        """
+        errors: list[str] = []
+        for i in range(len(self._index)):
+            try:
+                sample = self._load_raw_sample(i)
+                validate_training_sample(sample, i)
+            except (ValueError, KeyError, TypeError) as exc:
+                errors.append(f"sample {i}: {exc}")
+        return errors
 
     def __len__(self) -> int:
         return len(self._index)
@@ -149,7 +189,7 @@ class DraughtsJsonlDataset:
     def __getitem__(self, index: int) -> Dict[str, object]:
         entry = self._index[index]
         source = self.sources[entry.source_index]
-        sample = self._read_sample(entry)
+        sample = self._load_raw_sample(index)
         return training_item_from_sample(
             sample,
             policy_weight=float(source.policy_weight),
@@ -160,10 +200,17 @@ class DraughtsJsonlDataset:
 
     def raw_sample(self, index: int) -> Dict[str, object]:
         """Return the raw JSON sample dict at *index* (for introspection)."""
-        return self._read_sample(self._index[index])
+        return self._load_raw_sample(index)
 
-    @staticmethod
-    def _read_sample(entry: _SampleIndex) -> Dict[str, object]:
+    def _load_raw_sample(self, index: int) -> Dict[str, object]:
+        """Return the parsed JSON dict for *index*.
+
+        Uses the in-memory cache when available; otherwise reads from disk.
+        """
+        if self._cache is not None:
+            return self._cache[index]
+
+        entry = self._index[index]
         with open(entry.file_path, 'rb') as f:
             f.seek(entry.byte_offset)
             line = f.readline()
@@ -293,34 +340,74 @@ def has_observation_shape(value: object, shape: tuple[int, int, int]) -> bool:
 
 
 def collate_batch(items: Sequence[Dict[str, object]]) -> Dict[str, object]:
+    """Collate samples into a batch and convert to tensors in the worker.
+
+    Converting to tensors **inside** the DataLoader worker is critical
+    for performance: torch Tensors use shared memory for IPC whereas
+    nested Python lists would be pickled, which dominates training time
+    for small models.
+    """
+    try:
+        import torch
+    except ImportError as exc:
+        raise ImportError("PyTorch is required for collate_batch()") from exc
+
     max_moves = max((len(item["move_features"]) for item in items), default=0)
     has_soft_targets = any(item.get("policy_target_probs") is not None for item in items)
-    return {
-        "observation": [item["observation"] for item in items],
-        "action_mask": [item["action_mask"] for item in items],
-        "policy_target": [item["policy_target"] for item in items],
-        "move_features": [pad_move_features(item["move_features"], max_moves) for item in items],
-        "move_mask": [
-            [1] * len(item["move_features"]) + [0] * (max_moves - len(item["move_features"]))
-            for item in items
-        ],
-        "policy_target_index": [item["policy_target_index"] for item in items],
-        "policy_target_probs": (
+
+    batch: dict[str, object] = {
+        "observation": torch.tensor(
+            [item["observation"] for item in items], dtype=torch.float32,
+        ),
+        "action_mask": torch.tensor(
+            [item["action_mask"] for item in items], dtype=torch.float32,
+        ),
+        "policy_target": torch.tensor(
+            [item["policy_target"] for item in items], dtype=torch.long,
+        ),
+        "move_features": torch.tensor(
+            [pad_move_features(item["move_features"], max_moves) for item in items],
+            dtype=torch.float32,
+        ),
+        "move_mask": torch.tensor(
+            [
+                [1] * len(item["move_features"]) + [0] * (max_moves - len(item["move_features"]))
+                for item in items
+            ],
+            dtype=torch.float32,
+        ),
+        "policy_target_index": torch.tensor(
+            [item["policy_target_index"] for item in items], dtype=torch.long,
+        ),
+        "value_target": torch.tensor(
+            [item["value_target"] for item in items], dtype=torch.float32,
+        ),
+        "selected_policy_prob": torch.tensor(
+            [item.get("selected_policy_prob", 1.0) for item in items], dtype=torch.float32,
+        ),
+        "behavior_temperature": torch.tensor(
+            [item.get("behavior_temperature", 1.0) for item in items], dtype=torch.float32,
+        ),
+        "behavior_value": torch.tensor(
+            [item.get("behavior_value", 0.0) for item in items], dtype=torch.float32,
+        ),
+        "policy_weight": torch.tensor(
+            [item.get("policy_weight", 1.0) for item in items], dtype=torch.float32,
+        ),
+        "value_weight": torch.tensor(
+            [item.get("value_weight", 1.0) for item in items], dtype=torch.float32,
+        ),
+        "metadata": [item["metadata"] for item in items],
+    }
+    if has_soft_targets:
+        batch["policy_target_probs"] = torch.tensor(
             [
                 pad_probs(item.get("policy_target_probs"), len(item["move_features"]), max_moves)
                 for item in items
-            ]
-            if has_soft_targets
-            else None
-        ),
-        "value_target": [item["value_target"] for item in items],
-        "selected_policy_prob": [item.get("selected_policy_prob", 1.0) for item in items],
-        "behavior_temperature": [item.get("behavior_temperature", 1.0) for item in items],
-        "behavior_value": [item.get("behavior_value", 0.0) for item in items],
-        "policy_weight": [item.get("policy_weight", 1.0) for item in items],
-        "value_weight": [item.get("value_weight", 1.0) for item in items],
-        "metadata": [item["metadata"] for item in items],
-    }
+            ],
+            dtype=torch.float32,
+        )
+    return batch
 
 
 def pad_move_features(move_features: Sequence[Sequence[float]], max_moves: int) -> List[List[float]]:
