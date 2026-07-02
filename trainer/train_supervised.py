@@ -463,16 +463,17 @@ def make_loader(
 ) -> DataLoader:
     generator = torch.Generator()
     generator.manual_seed(config.seed)
-    return DataLoader(
-        Subset(dataset, list(indices)),
+    loader_kwargs: dict[str, object] = dict(
         batch_size=config.batch_size,
         shuffle=bool(config.shuffle) if training else False,
         num_workers=config.num_workers,
         collate_fn=collate_batch,
         pin_memory=True,
-        prefetch_factor=4,
         generator=generator,
     )
+    if config.num_workers > 0:
+        loader_kwargs["prefetch_factor"] = 4
+    return DataLoader(Subset(dataset, list(indices)), **loader_kwargs)
 
 
 def train_one_epoch(
