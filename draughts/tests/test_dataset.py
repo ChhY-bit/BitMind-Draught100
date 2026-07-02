@@ -2,6 +2,8 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import torch
+
 from draughts.dataset import (
     DataSource,
     DraughtsJsonlDataset,
@@ -144,8 +146,8 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(batch["policy_weight"].tolist(), [1.0, 1.0])
         self.assertEqual(batch["value_weight"].tolist(), [1.0, 1.0])
         self.assertEqual(len(batches), 2)
-        # No soft targets in items → probs should be None.
-        self.assertIsNone(batch["policy_target_probs"])
+        # No soft targets in items → key should be absent.
+        self.assertNotIn("policy_target_probs", batch)
 
     def test_collate_pads_soft_targets(self):
         items = [
@@ -175,7 +177,13 @@ class DatasetTests(unittest.TestCase):
 
         self.assertIsNotNone(batch["policy_target_probs"])
         # max_moves = 2, so both items padded to 2.
-        self.assertEqual(batch["policy_target_probs"].tolist(), [[0.7, 0.3], [1.0, 0.0]])
+        self.assertTrue(
+            torch.allclose(
+                batch["policy_target_probs"],
+                torch.tensor([[0.7, 0.3], [1.0, 0.0]]),
+            ),
+            msg=f"Got {batch['policy_target_probs']}",
+        )
 
     def test_dataset_validation_rejects_bad_mask(self):
         with TemporaryDirectory() as tmp_dir:
