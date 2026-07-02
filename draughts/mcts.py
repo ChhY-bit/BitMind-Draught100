@@ -8,8 +8,15 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import torch
 
-from .move_encoding import encode_legal_moves, move_to_dict
+from .move_encoding import (
+    SQUARE_COUNT,
+    encode_legal_moves,
+    move_to_dict,
+    perspective_square_id,
+    square_to_coord,
+)
 from .model import CandidateMoveNet
+from .env import EMPTY, piece_channel
 
 DEFAULT_MCTS_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "mcts.yaml"
 
@@ -27,10 +34,14 @@ class MCTSConfig:
     temperature: float = 0.0
     dirichlet_alpha: float = 0.3
     dirichlet_epsilon: float = 0.25
+    batch_size: int = 64
+    virtual_loss_value: float = -1.0
 
     def validate(self) -> None:
         if self.num_simulations <= 0:
             raise ValueError("num_simulations must be positive")
+        if self.batch_size <= 0:
+            raise ValueError("batch_size must be positive")
         if self.c_puct < 0:
             raise ValueError("c_puct must be non-negative")
         if self.temperature < 0:
@@ -56,11 +67,18 @@ class MCTSNode:
     ``total_value`` track how often the parent chose this action and
     what cumulative value was back-propagated, **both from the
     parent's perspective**.
+
+    ``virtual_loss_count`` is a temporary counter used during batch
+    inference.  When a selection path passes through an edge it
+    increments this counter so that other paths in the same batch are
+    pushed toward different branches.  The counter is decremented
+    during backprop, once the real network value is known.
     """
 
     prior: float = 0.0
     visit_count: int = 0
     total_value: float = 0.0
+    virtual_loss_count: int = 0
     children: dict[int, MCTSNode] = field(default_factory=dict)
 
     def q(self) -> float:
@@ -161,10 +179,63 @@ def mcts_search(
     for i, move in enumerate(legal_actions):
         root.children[move.action_id] = MCTSNode(prior=float(priors[i]))
 
-    # --- run simulations ---
-    for _ in range(config.num_simulations):
-        sim_env = env.clone()
-        _simulate(root, sim_env, model, config, device)
+    # --- run batched simulations ---
+    root_env = env.clone()  # preserved for cloning at the start of each batch item
+    batch_size = config.batch_size
+    remaining = config.num_simulations
+
+    while remaining > 0:
+        n = min(batch_size, remaining)
+
+        # ---- Phase 1: collect *n* leaves with virtual loss ----
+        leaf_data: list[tuple[MCTSNode, object, list[tuple[MCTSNode, int]], bool]] = []
+        for _idx in range(n):
+            sim_env = root_env.clone()
+            leaf = _collect_leaf(root, sim_env, config.c_puct, config.virtual_loss_value)
+            leaf_data.append(leaf)
+
+        # ---- Phase 2: categorize leaves (terminal vs. non-terminal) ----
+        leaf_values: list[float | None] = [None] * n
+        batch_envs: list[object] = []
+        batch_moves: list[list] = []
+
+        for i, (_node, leaf_env, _path, is_term) in enumerate(leaf_data):
+            if is_term:
+                leaf_values[i] = _terminal_value(leaf_env)
+            else:
+                moves = leaf_env.legal_actions()
+                if moves:
+                    batch_envs.append(leaf_env)
+                    batch_moves.append(moves)
+                else:
+                    # No moves but engine says not terminal — treat as loss
+                    leaf_values[i] = -1.0
+
+        # ---- Phase 3: batch inference ----
+        batch_output = None
+        if batch_envs:
+            batch_output = _batch_infer(batch_envs, batch_moves, model, device)
+
+        # ---- Phase 4: expand leaves & backprop ----
+        batch_pos = 0
+        for i, (leaf_node, _leaf_env, path, _is_term) in enumerate(leaf_data):
+            if leaf_values[i] is not None:
+                value = leaf_values[i]
+            else:
+                moves = batch_moves[batch_pos]
+                policy_logits = batch_output["policy_logits"][batch_pos, : len(moves)]
+                value = float(batch_output["value"][batch_pos].item())
+
+                # expand leaf node
+                priors = _softmax(policy_logits)
+                for j, move in enumerate(moves):
+                    leaf_node.children[move.action_id] = MCTSNode(prior=float(priors[j]))
+                batch_pos += 1
+
+            _backprop(path, value)
+            root.visit_count += 1
+
+        remaining -= n
 
     # --- aggregate results ---
     visit_counts: dict[int, int] = {}
@@ -195,56 +266,59 @@ def mcts_search(
 # ---------------------------------------------------------------------------
 
 
-def _simulate(
+def _collect_leaf(
     root: MCTSNode,
     env,
-    model: CandidateMoveNet,
-    config: MCTSConfig,
-    device: torch.device,
-) -> None:
-    """Run one MCTS simulation: selection → expansion → evaluation → backprop.
+    c_puct: float,
+    virtual_loss_value: float,
+) -> tuple[MCTSNode, object, list[tuple[MCTSNode, int]], bool]:
+    """Walk from *root* down to a leaf, applying virtual loss at each edge.
 
-    *env* is a clone that the simulation mutates (and discards afterwards).
+    Args:
+        root: Root of the search tree.
+        env: A clone of the root position (mutated during the walk).
+        c_puct: Exploration constant for PUCT.
+        virtual_loss_value: Value penalty for virtual-loss tracking.
+
+    Returns:
+        (leaf_node, env_at_leaf, path, is_terminal) where *path* is a
+        list of ``(parent_node, action_id)`` pairs recording the walk.
     """
     node = root
-    # path records (parent_node, action_id) so we can update edge
-    # statistics during backprop.
     path: list[tuple[MCTSNode, int]] = []
 
-    # ---- selection: walk down the existing tree ----
     while node.children and not env.is_terminal():
-        action_id = _select_child(node, config.c_puct)
+        action_id = _select_child(node, c_puct, virtual_loss_value)
         path.append((node, action_id))
+        child = node.children[action_id]
+        child.virtual_loss_count += 1
         _step_env(env, action_id)
-        node = node.children[action_id]
+        node = child
 
-    # ---- evaluation ----
-    if env.is_terminal():
-        leaf_value = _terminal_value(env)
-    else:
-        # expansion + network evaluation
-        legal_actions = env.legal_actions()
-        if legal_actions:
-            policy_logits, value = _infer_network(env, model, legal_actions, device)
-            priors = _softmax(policy_logits)
-            for i, move in enumerate(legal_actions):
-                node.children[move.action_id] = MCTSNode(prior=float(priors[i]))
-            leaf_value = value
-        else:
-            # No legal moves but not terminal — treat as lost for current side
-            leaf_value = -1.0
+    return node, env, path, env.is_terminal()
 
-    # ---- backprop: walk up, flipping value at each level ----
-    # leaf_value is from the leaf player's perspective.
-    # Flip once to get the perspective of the player who made the
-    # last action (the edge leading to the leaf), then continue.
+
+def _backprop(
+    path: list[tuple[MCTSNode, int]],
+    leaf_value: float,
+) -> None:
+    """Back-propagate *leaf_value* along *path*, removing virtual loss.
+
+    *leaf_value* is from the perspective of the player at the leaf.
+    The value is flipped at each level so the edge statistics are
+    stored from the parent player's perspective.
+
+    Virtual loss that was applied during leaf collection is removed
+    (the counter is simply decremented; the virtual value itself was
+    only a temporary guide for PUCT selection).
+    """
     v = leaf_value
     for parent, action_id in reversed(path):
         v = -v  # switch to parent's perspective
         child = parent.children[action_id]
+        child.virtual_loss_count -= 1
         child.visit_count += 1
         child.total_value += v
-    root.visit_count += 1
 
 
 # ---------------------------------------------------------------------------
@@ -252,17 +326,31 @@ def _simulate(
 # ---------------------------------------------------------------------------
 
 
-def _select_child(node: MCTSNode, c_puct: float) -> int:
-    """Choose the child with the highest PUCT score."""
-    total_visits = sum(c.visit_count for c in node.children.values())
-    # Use sqrt(total_visits) if there have been visits, else 0.
+def _select_child(
+    node: MCTSNode,
+    c_puct: float,
+    virtual_loss_value: float = -1.0,
+) -> int:
+    """Choose the child with the highest PUCT score.
+
+    When *virtual_loss_value* is not 0, each child's Q-value is
+    computed with temporary virtual-loss visits taken into account so
+    that parallel paths within the same batch are steered toward
+    different branches.
+    """
+    total_visits = 0
+    for c in node.children.values():
+        total_visits += c.visit_count + c.virtual_loss_count
+
     sqrt_total = math.sqrt(max(total_visits, 1))
 
     best_action = -1
     best_score = -float("inf")
     for action_id, child in node.children.items():
-        exploit = child.q()
-        explore = c_puct * child.prior * sqrt_total / (1.0 + child.visit_count)
+        effective_visits = child.visit_count + child.virtual_loss_count
+        effective_value = child.total_value + child.virtual_loss_count * virtual_loss_value
+        exploit = effective_value / max(effective_visits, 1)
+        explore = c_puct * child.prior * sqrt_total / (1.0 + effective_visits)
         score = exploit + explore
         if score > best_score:
             best_score = score
@@ -278,38 +366,98 @@ def _select_child(node: MCTSNode, c_puct: float) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _raw_obs_to_tensor(raw_obs: dict) -> torch.Tensor:
+    """Build a [6, 10, 10] board tensor directly from a raw observation dict.
+
+    This avoids the intermediate nested-list allocation that
+    ``StandardDraughtsEnv.observation()`` performs, and is designed to
+    be called once per batch element inside ``_batch_infer``.
+    """
+    side_to_move = int(raw_obs["side_to_move"])
+    squares = raw_obs["squares"]
+    encoded = torch.zeros(6, 10, 10, dtype=torch.float32)
+
+    for square_id in range(1, SQUARE_COUNT + 1):
+        persp_sq = perspective_square_id(square_id, side_to_move)
+        row, col = square_to_coord(persp_sq)
+        piece = int(squares[square_id - 1])
+        encoded[4, row, col] = 1.0  # channel 4: playable square
+        if piece != EMPTY:
+            channel = piece_channel(piece, side_to_move)
+            encoded[channel, row, col] = 1.0
+
+    return encoded
+
+
+def _batch_infer(
+    envs: list,
+    legal_actions_list: list,
+    model: CandidateMoveNet,
+    device: torch.device,
+) -> dict[str, torch.Tensor]:
+    """Run the network on a batch of positions.
+
+    Different positions may have different numbers of legal moves; the
+    move-feature tensor is padded to ``max(M)`` within the batch and
+    illegal slots are masked out.
+
+    Args:
+        envs: List of ``StandardDraughtsEnv`` at the positions to evaluate.
+        legal_actions_list: ``legal_actions[i]`` is the move list for *envs[i]*.
+        model: The network.
+        device: ``torch.device`` for inference.
+
+    Returns:
+        ``{"policy_logits": [B, max_M], "value": [B]}``.
+        Policy logits for padded (non-existent) slots are not
+        meaningful; the caller should only use the first ``M_i``
+        entries for each sample.
+    """
+    B = len(envs)
+    max_M = max((len(la) for la in legal_actions_list), default=0)
+    if max_M == 0:
+        raise ValueError("_batch_infer called with positions that have no legal moves")
+
+    # --- build tensors ---
+    board_batch = torch.zeros(B, 6, 10, 10, dtype=torch.float32)
+    moves_batch = torch.zeros(B, max_M, 45, dtype=torch.float32)
+    mask_batch = torch.zeros(B, max_M, dtype=torch.float32)
+
+    for i, env in enumerate(envs):
+        raw_obs = env.raw_observation()
+        board_batch[i] = _raw_obs_to_tensor(raw_obs)
+
+        M = len(legal_actions_list[i])
+        side = int(raw_obs["side_to_move"])
+        move_dicts = [move_to_dict(m) for m in legal_actions_list[i]]
+        features = encode_legal_moves(move_dicts, side_to_move=side)
+        moves_batch[i, :M] = torch.tensor(features, dtype=torch.float32)
+        mask_batch[i, :M] = 1.0
+
+    board_batch = board_batch.to(device)
+    moves_batch = moves_batch.to(device)
+    mask_batch = mask_batch.to(device)
+
+    with torch.no_grad():
+        output = model(board_batch, moves_batch, mask_batch)
+
+    return output  # {"policy_logits": [B, max_M], "value": [B]}
+
+
 def _infer_network(
     env,
     model: CandidateMoveNet,
     legal_actions: list,
     device: torch.device,
 ) -> tuple[torch.Tensor, float]:
-    """Run the network on a single position.
+    """Run the network on a single position (convenience wrapper).
 
     Returns:
         policy_logits: 1-D tensor with raw logits for each legal action.
         value: scalar float in [-1, 1] (tanh output).
     """
-    raw_obs = env.raw_observation()
-    side_to_move = int(raw_obs["side_to_move"])
-    move_dicts = [move_to_dict(m) for m in legal_actions]
-
-    observation_tensor = torch.tensor(
-        [env.observation()], dtype=torch.float32, device=device
-    )
-    move_features_tensor = torch.tensor(
-        [encode_legal_moves(move_dicts, side_to_move=side_to_move)],
-        dtype=torch.float32,
-        device=device,
-    )
-    move_mask = torch.ones(
-        (1, len(legal_actions)), dtype=torch.float32, device=device
-    )
-
-    with torch.no_grad():
-        output = model(observation_tensor, move_features_tensor, move_mask)
-
-    policy_logits = output["policy_logits"][0]  # [M]
+    output = _batch_infer([env], [legal_actions], model, device)
+    policy_logits = output["policy_logits"][0, : len(legal_actions)]
     value = float(output["value"][0].item())
     return policy_logits, value
 
@@ -381,6 +529,8 @@ def load_mcts_config(config_path: Optional[str] = None) -> MCTSConfig:
         "temperature": default_config.temperature,
         "dirichlet_alpha": default_config.dirichlet_alpha,
         "dirichlet_epsilon": default_config.dirichlet_epsilon,
+        "batch_size": default_config.batch_size,
+        "virtual_loss_value": default_config.virtual_loss_value,
     }
     values = dict(defaults)
     values.update(_load_scalar_yaml(path, defaults, "mcts"))

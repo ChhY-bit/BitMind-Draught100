@@ -16,8 +16,8 @@
 | `move_encoding.py` | 候选动作 → 45 维特征向量 | `encode_legal_moves`, `move_to_dict`, `MOVE_FEATURE_DIM` |
 | `model.py` | 神经网络定义 | `CandidateMoveNet`, `ModelConfig`, `load_model_config` |
 | `agents.py` | 所有智能体类 | 6 个 Agent 类, `make_agent`, `available_agents` |
-| `mcts.py` | MCTS 搜索（PUCT + 网络引导） | `mcts_search`, `MCTSConfig`, `MCTSNode`, `MCTSResult` |
-| `dataset.py` | JSONL 数据加载与批处理 | `DraughtsJsonlDataset`, `collate_batch`, `to_torch_batch` |
+| `mcts.py` | MCTS 搜索（PUCT + 批量推理 + 虚拟损失） | `mcts_search`, `MCTSConfig`, `MCTSNode`, `MCTSResult` |
+| `dataset.py` | JSONL 加载、内存缓存、tensor 拼批 | `DraughtsJsonlDataset`, `collate_batch`, `to_torch_batch` |
 
 ## 依赖层次
 
@@ -107,11 +107,18 @@ action_id = agent.select_action(observation, legal_actions, env)
 ```python
 from draughts.dataset import DraughtsJsonlDataset, collate_batch, to_torch_batch
 
+# 默认启用内存缓存 — 构造时一次性加载全量 JSON，训练时零磁盘 I/O
 dataset = DraughtsJsonlDataset(["data/file1.jsonl", "data/file2.jsonl"])
 loader = DataLoader(dataset, batch_size=32, collate_fn=collate_batch)
 ```
 
-`DraughtsJsonlDataset` 采用文件偏移量索引实现懒加载——构建时只扫描 JSONL 行边界，样本在 `__getitem__` 时才从磁盘读取，内存占用与样本数量而非样本总大小成正比。支持数据源权重（`--source` 或 `--source-config`），可按来源分别设置 policy/value loss 权重。
+`DraughtsJsonlDataset` 默认开启内存缓存（`cache_in_memory=True`）：构造时扫描 JSONL 并解析全量样本存入内存，`__getitem__` 直接从缓存返回，消除训练期间的磁盘 I/O 和 JSON 解析开销。对于超大数据集可设 `cache_in_memory=False` 退化为按需读盘模式。
+
+`collate_batch` 在 DataLoader worker 进程内直接将 Python 数据转为 `torch.Tensor`，利用 PyTorch 的共享内存机制传递 batch，避免 pickle 序列化瓶颈。
+
+数据校验改为按需调用：`dataset.validate()` 返回错误列表，日常训练无需启用。
+
+支持数据源权重（`--source` 或 `--source-config`），可按来源分别设置 policy/value loss 权重。
 
 ## 配置
 
@@ -123,7 +130,7 @@ loader = DataLoader(dataset, batch_size=32, collate_fn=collate_batch)
 | `alphabeta.yaml` | `agents.py` | AlphaBeta 搜索深度与评估权重 |
 | `alphabeta_plus.yaml` | `agents.py` | 更深搜索配置（depth=3） |
 | `material.yaml` | `agents.py` | 材料评估参数 |
-| `mcts.yaml` | `mcts.py` | MCTS 搜索超参数（sims, c_puct, temperature, dirichlet） |
+| `mcts.yaml` | `mcts.py` | MCTS 搜索超参数（sims, c_puct, batch_size, virtual_loss, dirichlet） |
 
 ## 测试
 

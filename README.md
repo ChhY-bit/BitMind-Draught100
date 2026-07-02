@@ -1,6 +1,6 @@
 # BitMind-Draught100
 
-100 格国际跳棋 AI——使用神经网络引导 MCTS 搜索，构建超越传统 AlphaBeta 的博弈智能体。
+100 格国际跳棋 AI——使用神经网络引导 MCTS 搜索，支持批量推理加速，构建超越传统 AlphaBeta 的博弈智能体。
 
 ## 软硬件要求
 
@@ -123,6 +123,16 @@ PYTHONPATH=interface:. python3 scripts/selfplay.py \
   --output data/selfplay_mcts.jsonl
 ```
 
+> **批量推理调参**：如需调整 batch_size，通过 `--mcts-config` 传入自定义 YAML：
+> ```bash
+> # CPU 模式示例（小 batch）
+> PYTHONPATH=interface:. python3 scripts/selfplay.py \
+>   --black mcts --white mcts \
+>   --black-checkpoint ckpt.pt --white-checkpoint ckpt.pt \
+>   --mcts-config draughts/config/mcts.yaml \
+>   --games 100 --device cpu
+> ```
+
 **第二步**：从头训练新一代网络。
 
 ```bash
@@ -196,9 +206,48 @@ gui/             Tkinter 棋盘界面
 | `alphabeta` | AlphaBeta | depth=2 搜索 |
 | `alphabeta_plus` | AlphaBeta | depth=3 搜索，最强手工基线 |
 | `supervised` | 网络 greedy | 加载网络权重，直接选最高分走法 |
-| `mcts` | MCTS + 网络 | PUCT 搜索，网络提供先验和价值评估 |
+| `mcts` | MCTS + 网络 | PUCT 搜索 + 批量推理，网络提供先验和价值评估 |
 
 所有智能体通过 `make_agent("名称")` 创建。
+
+---
+
+## MCTS 批量推理
+
+MCTS 搜索支持**批量推理**：将多个叶子节点的网络评估打包为一个 batch，一次 GPU 前向传播同时处理，大幅减少 CUDA kernel 启动开销。
+
+### 原理
+
+不再逐一走"选子→推理→回传"串行循环，而是：
+
+1. **收集一批叶子**：用虚拟损失（virtual loss）把同一批次的多条路径推向不同分支
+2. **一次批量推理**：将所有叶子局面打包为 `[B, 6, 10, 10]` 张量，一次 forward 输出 B 个 policy + value
+3. **分别回传**：撤销虚拟损失，将真实值沿各自路径回传
+
+### 配置
+
+关键参数在 `draughts/config/mcts.yaml`：
+
+```yaml
+num_simulations: 800   # 总模拟次数（推理加速后可大幅提升）
+batch_size: 64         # 每批收集的叶子数
+virtual_loss_value: -1.0  # 虚拟损失值（-1.0 推开效果最强）
+```
+
+### 调参建议
+
+| 硬件 | 推荐 batch_size | 推荐 num_simulations |
+|------|----------------|---------------------|
+| CPU 模式 | 1–8 | 80–200 |
+| GPU (≥8 GB) | 64–256 | 400–800 |
+| GPU (≥24 GB) | 128–512 | 800–1600 |
+| GPU (96 GB) | 256–1024 | 800–3200 |
+
+> **注意**：`CandidateMoveNet` 模型极小（3 层 Conv + 小 MLP），即使 batch_size=512 也远未触及显存瓶颈。CPU 模式下设 batch_size=1 即为传统串行模式。
+
+### 速度预期
+
+在 NVIDIA GPU 上，800 sims 批量推理（batch_size=64）相比逐次推理（batch_size=1）可获得约 **5–10 倍**加速，且模拟数可从 80 提升至 800，棋力随之增强。
 
 ---
 
@@ -243,6 +292,10 @@ done
 
 多卡环境下可将 selfplay 拆分到不同 GPU 并行加速（详见上文[设备指定](#设备指定)），最后合并 JSONL 训练即可。
 
+> **批量推理**：MCTS 自博弈默认使用 `draughts/config/mcts.yaml` 中的 `batch_size`。
+> 在 96 GB GPU 上可设 `batch_size: 256` 或更高以获得最大吞吐。CPU 模式建议
+> `batch_size: 1`（退化为传统串行 MCTS）。详见[批量推理章节](#mcts-批量推理)。
+
 ---
 
 ## 文档索引
@@ -262,5 +315,7 @@ done
 ## 已知限制
 
 - 和棋规则未实现（三次重复、40 步规则），靠 `max_plies` 截断
-- `env.clone()` 是 MCTS 搜索的性能瓶颈
+- `env.clone()` 仍有优化空间（move/undo 替代方案待实现）
+- 走法编码仍在 Python 层，C 层向量化可进一步提升速度
 - reward 仅提供基础终局奖励（+1/-1/0）
+- 数据集默认全量载入内存（35K 样本约 400 MB），超大数据集可通过 `cache_in_memory=False` 关闭

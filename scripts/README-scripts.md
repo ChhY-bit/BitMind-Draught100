@@ -45,6 +45,8 @@ PYTHONPATH=interface:. python3 scripts/selfplay.py \
 
 MCTS 自博弈会自动将 search visit count 分布作为 `policy_target_probs` 写入 JSONL，无需再跑 `search_improve`。
 
+MCTS 批量推理参数（`batch_size`, `virtual_loss_value`）通过 `--mcts-config` 指定的 YAML 文件配置，默认读取 `draughts/config/mcts.yaml`。GPU 场景建议 `batch_size: 64–256`，CPU 场景建议 `batch_size: 1–8`。
+
 ---
 
 ## `search_improve.py` — 搜索改进数据生成
@@ -103,7 +105,7 @@ PYTHONPATH=interface:. python3 scripts/arena.py \
 | `--black-checkpoint` | path | none | 黑方 supervised checkpoint |
 | `--white-checkpoint` | path | none | 白方 supervised checkpoint |
 | `--device` | str | auto | 推理设备：`cpu`、`cuda`（= `cuda:0`）、`cuda:1` |
-| `--mcts-config` | path | none | MCTSAgent YAML 配置 |
+| `--mcts-config` | path | none | MCTSAgent YAML 配置（含 batch_size） |
 
 ---
 

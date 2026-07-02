@@ -93,6 +93,27 @@ PYTHONPATH=interface:. python3 trainer/train_supervised.py \
 | `seed` | 4 | 随机种子 |
 | `shuffle` | 1 | 是否打乱训练样本（1=是, 0=否） |
 | `log_interval` | 20 | 每隔多少 batch 打印日志 |
-| `num_workers` | 0 | DataLoader 子进程数 |
+| `num_workers` | 4 | DataLoader 子进程数（GPU 推荐 4–8，CPU 设为 0） |
 
 以上参数均可被命令行 `--epochs`、`--batch-size`、`--lr` 覆盖。
+
+### 数据加载优化
+
+训练管线已做以下优化，最大化 GPU 利用率：
+
+| 优化项 | 说明 |
+|--------|------|
+| 内存缓存 | `DraughtsJsonlDataset` 默认 `cache_in_memory=True`，构造时一次性载入全量 JSON，训练零磁盘 I/O |
+| Worker 内 tensor 化 | `collate_batch` 在 DataLoader worker 进程中直接构建 `torch.Tensor`，通过共享内存传 batch，消除 pickle 瓶颈 |
+| `pin_memory=True` | 加速 CPU→GPU 数据传输 |
+| `prefetch_factor=4` | 每个 worker 预取 4 个 batch，GPU 始终有数据待命 |
+
+**调参建议**：
+
+| 硬件 | `num_workers` | `batch_size` |
+|------|--------------|-------------|
+| CPU 训练 | 0 | 32–64 |
+| GPU（单卡） | 4–8 | 64–256 |
+| GPU（多卡/大显存） | 8–16 | 256–512 |
+
+> 数据校验改为按需：`dataset.validate()` 可在拿到新数据时显式调用，日常训练默认跳过。

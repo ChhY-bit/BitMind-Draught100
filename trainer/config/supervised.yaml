@@ -29,5 +29,6 @@ log_interval: 20
 # 长时间训练时可以调大，例如 5 或 10，避免 CSV 过长；最后一个 epoch 一定会写入。
 csv_log_interval_epochs: 1
 
-# DataLoader 子进程数；当前数据量不大，CPU 环境用 0 最稳妥。
-num_workers: 0
+# DataLoader 子进程数；设为 0 则在主进程中加载（慢，仅调试用）。
+# GPU 训练推荐 4–8，CPU 训练设为 0。
+num_workers: 4

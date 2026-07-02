@@ -18,9 +18,9 @@ draughts/                 核心 Python 库
   ├── env.py                StandardDraughtsEnv（局面管理、走子、克隆）
   ├── model.py              CandidateMoveNet（CNN 编码器 + policy head + value head）
   ├── agents.py             所有智能体（6 种，统一通过 make_agent() 创建）
-  ├── mcts.py               MCTS 搜索（PUCT 公式，网络提供先验和叶子评估）
+  ├── mcts.py               MCTS 搜索（PUCT 公式 + 批量推理 + 虚拟损失）
   ├── move_encoding.py      走法 → 固定维度特征向量
-  ├── dataset.py            JSONL 加载、软标签支持、批处理
+  ├── dataset.py            JSONL 加载、内存缓存、worker 内 tensor 拼批、软标签支持
   └── config/               YAML 配置（模型结构、搜索参数、评估权重）
 trainer/                  训练入口（train_supervised.py，硬标签/软标签自动兼容）
 scripts/                  独立应用
@@ -58,10 +58,11 @@ make test && make interface-test && make all-python-test
 # 所有 Python 命令前加
 PYTHONPATH=interface:.
 
-# MCTS 自博弈（一步产出软标签训练数据）
+# MCTS 自博弈（一步产出软标签训练数据，批量推理加速）
 python3 scripts/selfplay.py --black mcts --white mcts \
   --black-checkpoint ckpt.pt --white-checkpoint ckpt.pt \
-  --games 2000 --opening-random-plies 6 --device cuda
+  --games 2000 --opening-random-plies 6 --device cuda \
+  --mcts-config draughts/config/mcts.yaml
 
 # 从头训练（Phase 3 标准做法，不 resume）
 python3 trainer/train_supervised.py data.jsonl --epochs 10 --device cuda
@@ -78,7 +79,7 @@ python3 scripts/arena.py --black mcts --white alphabeta_plus \
 - **"能下棋吗"** → 能。编译后 `python3 gui/simple_gui.py` 即可打开棋盘界面。
 - **"怎么训练自己的 AI"** → 先跑 selfplay 生成数据，再跑 train_supervised 训练网络。
 - **"现在棋力怎么样"** → 看 PROGRESS.md 的棋力层级图，MCTS+网络已能稳定对抗 AlphaBeta depth=2。
-- **"怎么让它变更强"** → Phase 3 自博弈闭环：网络越强 → MCTS 越准 → 生成数据越好 → 训练出新网络更强 → 循环。
+- **"怎么让它变更强"** → Phase 3 自博弈闭环：网络越强 → MCTS 越准 → 生成数据越好 → 训练出新网络更强 → 循环。MCTS 批量推理可将 sims 从 80 提升至 800+，棋力随之增长。
 - **"规则是什么"** → 国际跳棋，10×10 棋盘，强制吃子、最多吃子、升王。详见 SPEC.md。
 - **"依赖重吗"** → 极轻。唯一外部依赖是 PyTorch，其他全部标准库。
 - **"各个文档的关系"** → README 是总入口，SPEC 是规则，ROADMAP 是方法路线，PROGRESS 是当前状态，各子目录 README 是模块手册。
