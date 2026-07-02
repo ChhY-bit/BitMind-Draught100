@@ -132,17 +132,17 @@ class DatasetTests(unittest.TestCase):
         batch = collate_batch(items)
         batches = list(batched(items, 1))
 
-        self.assertEqual(batch["policy_target"], [0, 1])
+        self.assertEqual(batch["policy_target"].tolist(), [0, 1])
         self.assertEqual(len(batch["move_features"]), 2)
         self.assertEqual(len(batch["move_features"][0]), 2)
-        self.assertEqual(batch["move_mask"], [[1, 0], [1, 1]])
-        self.assertEqual(batch["policy_target_index"], [0, 1])
-        self.assertEqual(batch["value_target"], [1, -1])
-        self.assertEqual(batch["selected_policy_prob"], [1.0, 1.0])
-        self.assertEqual(batch["behavior_temperature"], [1.0, 1.0])
-        self.assertEqual(batch["behavior_value"], [0.0, 0.0])
-        self.assertEqual(batch["policy_weight"], [1.0, 1.0])
-        self.assertEqual(batch["value_weight"], [1.0, 1.0])
+        self.assertEqual(batch["move_mask"].tolist(), [[1, 0], [1, 1]])
+        self.assertEqual(batch["policy_target_index"].tolist(), [0, 1])
+        self.assertEqual(batch["value_target"].tolist(), [1, -1])
+        self.assertEqual(batch["selected_policy_prob"].tolist(), [1.0, 1.0])
+        self.assertEqual(batch["behavior_temperature"].tolist(), [1.0, 1.0])
+        self.assertEqual(batch["behavior_value"].tolist(), [0.0, 0.0])
+        self.assertEqual(batch["policy_weight"].tolist(), [1.0, 1.0])
+        self.assertEqual(batch["value_weight"].tolist(), [1.0, 1.0])
         self.assertEqual(len(batches), 2)
         # No soft targets in items → probs should be None.
         self.assertIsNone(batch["policy_target_probs"])
@@ -175,7 +175,7 @@ class DatasetTests(unittest.TestCase):
 
         self.assertIsNotNone(batch["policy_target_probs"])
         # max_moves = 2, so both items padded to 2.
-        self.assertEqual(batch["policy_target_probs"], [[0.7, 0.3], [1.0, 0.0]])
+        self.assertEqual(batch["policy_target_probs"].tolist(), [[0.7, 0.3], [1.0, 0.0]])
 
     def test_dataset_validation_rejects_bad_mask(self):
         with TemporaryDirectory() as tmp_dir:
@@ -195,7 +195,7 @@ class DatasetTests(unittest.TestCase):
             output.write_text(__import__("json").dumps(bad_sample), encoding="utf-8")
 
             with self.assertRaises(ValueError):
-                DraughtsJsonlDataset([str(output)])
+                DraughtsJsonlDataset([str(output)], validate=True)
 
 
 if __name__ == "__main__":
