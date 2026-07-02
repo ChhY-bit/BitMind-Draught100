@@ -15,6 +15,31 @@
 
 唯一外部 Python 依赖是 PyTorch，其余全部使用标准库。
 
+### 设备指定
+
+所有脚本通过 `--device` 参数选择计算设备：
+
+```bash
+--device cpu       # 仅 CPU
+--device cuda      # GPU 0（等价于 cuda:0）
+--device cuda:0    # 指定 GPU 0
+--device cuda:1    # 指定 GPU 1
+```
+
+多卡并行时建议用 `CUDA_VISIBLE_DEVICES` 隔离进程：
+
+```bash
+# 终端 1：绑 GPU 0
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=interface:. python3 scripts/selfplay.py \
+  --black mcts --white mcts --black-checkpoint ckpt.pt --white-checkpoint ckpt.pt \
+  --games 2000 --opening-random-plies 6 --device cuda --output data_0.jsonl --seed 42
+
+# 终端 2：绑 GPU 1
+CUDA_VISIBLE_DEVICES=1 PYTHONPATH=interface:. python3 scripts/selfplay.py \
+  --black mcts --white mcts --black-checkpoint ckpt.pt --white-checkpoint ckpt.pt \
+  --games 2000 --opening-random-plies 6 --device cuda --output data_1.jsonl --seed 123
+```
+
 ---
 
 ## 快速开始
@@ -215,6 +240,8 @@ done
 ```
 
 每轮从头训练，旧数据不混入，仅 checkpoint 传递到下一轮作为搜索引擎。
+
+多卡环境下可将 selfplay 拆分到不同 GPU 并行加速（详见上文[设备指定](#设备指定)），最后合并 JSONL 训练即可。
 
 ---
 

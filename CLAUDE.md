@@ -44,6 +44,7 @@ gui/                      Tkinter 棋盘（人机对弈、AI 观战）
 | 训练新网络 | `PYTHONPATH=interface:. python3 trainer/train_supervised.py <data.jsonl> --device cuda` |
 | 评测两个 agent | `PYTHONPATH=interface:. python3 scripts/arena.py --black <a> --white <b> --games 100` |
 | 生成训练数据 | `PYTHONPATH=interface:. python3 scripts/selfplay.py --black <a> --white <b> --output data.jsonl` |
+| 指定 GPU 序号 | `--device cuda:0`（GPU 0）、`--device cuda:1`（GPU 1），或 `CUDA_VISIBLE_DEVICES=1 ... --device cuda` |
 | 基座网络在哪 | `trainer/checkpoints/candidate_move_net_best.pt` |
 | MCTS 参数在哪 | `draughts/config/mcts.yaml` |
 | 当前网络棋力 | 见 [PROGRESS.md](PROGRESS.md) 的棋力层级图 |

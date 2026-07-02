@@ -27,7 +27,7 @@ PYTHONPATH=interface:. python3 trainer/train_supervised.py data \
 | `--model-config` | path | `draughts/config/model.yaml` | 网络结构配置 |
 | `--checkpoint-dir` | path | `trainer/checkpoints` | checkpoint 保存目录 |
 | `--resume` | path | none | 从此 checkpoint 继续训练 |
-| `--device` | str | auto | 训练设备：`cpu`、`cuda` |
+| `--device` | str | auto | 训练设备：`cpu`、`cuda`（= `cuda:0`）、`cuda:1` |
 | `--epochs` | int | (YAML 中的值) | 覆盖配置文件中的训练轮数 |
 | `--batch-size` | int | (YAML 中的值) | 覆盖配置文件中的批次大小 |
 | `--lr` | float | (YAML 中的值) | 覆盖配置文件中的学习率 |

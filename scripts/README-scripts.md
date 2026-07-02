@@ -38,7 +38,7 @@ PYTHONPATH=interface:. python3 scripts/selfplay.py \
 | `--alphabeta-config` | path | none | AlphaBetaAgent 的 YAML 配置 |
 | `--black-checkpoint` | path | none | 黑方 supervised checkpoint |
 | `--white-checkpoint` | path | none | 白方 supervised checkpoint |
-| `--device` | str | auto | supervised/mcts 推理设备：`cpu`、`cuda` |
+| `--device` | str | auto | 推理设备：`cpu`、`cuda`（= `cuda:0`）、`cuda:1` |
 | `--mcts-config` | path | none | MCTSAgent 的 YAML 配置 |
 | `--append` | flag | off | 追加写入 output 文件 |
 | `--auto-output-name` | flag | on | output 已存在时自动生成 `_001`/`_002` 新文件名 |
@@ -102,7 +102,7 @@ PYTHONPATH=interface:. python3 scripts/arena.py \
 | `--alphabeta-config` | path | none | AlphaBetaAgent YAML 配置 |
 | `--black-checkpoint` | path | none | 黑方 supervised checkpoint |
 | `--white-checkpoint` | path | none | 白方 supervised checkpoint |
-| `--device` | str | auto | supervised/mcts 推理设备 |
+| `--device` | str | auto | 推理设备：`cpu`、`cuda`（= `cuda:0`）、`cuda:1` |
 | `--mcts-config` | path | none | MCTSAgent YAML 配置 |
 
 ---
@@ -136,7 +136,7 @@ PYTHONPATH=interface:. python3 scripts/compare_checkpoints.py \
 | `--report` | path | none | 输出 JSON 报告路径 |
 | `--material-config` | path | none | MaterialAgent YAML 配置 |
 | `--alphabeta-config` | path | none | AlphaBetaAgent YAML 配置 |
-| `--device` | str | auto | supervised 推理设备 |
+| `--device` | str | auto | 推理设备：`cpu`、`cuda`（= `cuda:0`）、`cuda:1` |
 
 ### Preset 详情
 
