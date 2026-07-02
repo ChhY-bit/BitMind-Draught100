@@ -1,5 +1,7 @@
 CC ?= cc
-CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -Werror -Iengine/include
+CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -Werror
+# Always append project include path, even when CFLAGS is set by conda or other tools
+override CFLAGS += -Iengine/include
 PIC_CFLAGS := $(CFLAGS) -fPIC
 
 BUILD_DIR := build
