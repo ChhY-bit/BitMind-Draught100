@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Sequence
 
+# 引入底层走法结构
 from draughts_env import Move
 
 
@@ -16,9 +17,11 @@ BLACK_SIDE = 0
 WHITE_SIDE = 1
 
 
+# 将走法字典映射为走法向量
 def encode_move(move: Dict[str, object], side_to_move: int = BLACK_SIDE) -> List[float]:
-    path = [int(square) for square in move["path"]]
-    captures = [int(square) for square in move.get("captures", [])]
+    path = [int(square) for square in move["path"]] # 获取所有当前走法的全部路径
+    captures = [int(square) for square in move.get("captures", [])] # 获取当前走法的全部吃子
+    # 异常处理：
     if not path:
         raise ValueError("move path must not be empty")
     if len(path) > MAX_PATH_POINTS:
@@ -26,11 +29,15 @@ def encode_move(move: Dict[str, object], side_to_move: int = BLACK_SIDE) -> List
     if len(captures) > MAX_CAPTURES:
         raise ValueError(f"capture count {len(captures)} exceeds {MAX_CAPTURES}")
 
+    # 根据己方/对方灵活处理：
     path = [perspective_square_id(square, side_to_move) for square in path]
     captures = [perspective_square_id(square, side_to_move) for square in captures]
 
+    # 获取起始位置和结束位置：
     start_row, start_col = normalized_square_coord(path[0])
     end_row, end_col = normalized_square_coord(path[-1])
+
+    # 汇总为用于深度学习的走法向量（含归一化）：
     features = [
         start_row,
         start_col,
@@ -48,6 +55,7 @@ def encode_move(move: Dict[str, object], side_to_move: int = BLACK_SIDE) -> List
     return features
 
 
+# 生成所有走法的向量列表
 def encode_legal_moves(
     moves: Sequence[Dict[str, object]],
     side_to_move: int = BLACK_SIDE,
@@ -118,6 +126,7 @@ def perspective_square_id(square_id: int, side_to_move: int) -> int:
     raise ValueError(f"invalid side_to_move: {side_to_move}")
 
 
+# 将底层走法结构转换为Python字典的格式
 def move_to_dict(move: Move) -> Dict[str, object]:
     """Convert a ctypes Move to a plain dict for encoding."""
     return {

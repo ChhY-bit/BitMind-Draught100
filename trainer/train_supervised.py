@@ -71,7 +71,7 @@ def main() -> None:
         data_source_descriptions,
     )
     print(f"supervised: loading dataset from {', '.join(data_source_descriptions)}", flush=True)
-    dataset = DraughtsJsonlDataset.from_sources(data_sources)
+    dataset = DraughtsJsonlDataset.from_sources(data_sources, cache_in_memory=not args.no_cache)
     print(f"supervised: loaded {len(dataset)} samples", flush=True)
     train_indices, val_indices = split_indices(len(dataset), config.validation_split, config.seed)
     print(
@@ -241,6 +241,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--lr", type=float, default=None,
         help="Learning rate (overrides config file).",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Do not preload JSONL into memory. Saves RAM at the cost of slower per-epoch I/O.",
     )
     args = parser.parse_args()
     if not args.data and not args.source_config and not args.source:

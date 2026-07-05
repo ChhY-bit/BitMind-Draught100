@@ -31,6 +31,7 @@ PYTHONPATH=interface:. python3 trainer/train_supervised.py data \
 | `--epochs` | int | (YAML 中的值) | 覆盖配置文件中的训练轮数 |
 | `--batch-size` | int | (YAML 中的值) | 覆盖配置文件中的批次大小 |
 | `--lr` | float | (YAML 中的值) | 覆盖配置文件中的学习率 |
+| `--no-cache` | flag | off | 不预加载 JSONL 到内存，省 RAM 但略慢 |
 | `--save-every-epoch` | flag | off | 每个 epoch 都保存 checkpoint |
 | `--source` | str | none | 数据源权重：`路径:policy_w:value_w:标签`（可重复） |
 | `--source-config` | path | none | 数据源权重 YAML 配置文件 |

@@ -108,6 +108,8 @@ PYTHONPATH=interface:. python3 trainer/train_supervised.py \
 
 训练完成后，checkpoint 保存在 `trainer/checkpoints/candidate_move_net_best.pt`。
 
+> **大数据集内存优化**：默认会将整个 JSONL 预加载到内存。如果数据超过 1GB，建议加 `--no-cache` 参数，数据将按需从磁盘逐行读取，内存占用从 ~180GB 降至几乎可忽略。详见 `trainer/README-trainer.md`。
+
 ### 4. 路线二：MCTS 自博弈训练
 
 路线一的网络训练好后，就可以用它来做 MCTS 搜索。MCTS 自博弈时，搜索过程本身就是一次"深度思考"——产生的 visit count 分布天然是高质量的训练标签，不需要再让 AlphaBeta 来打分。

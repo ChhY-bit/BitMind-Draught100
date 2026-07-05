@@ -119,7 +119,7 @@ class StandardDraughtsEnv:
     def action_history(self) -> List[int]:
         return list(self._action_history)
 
-
+""" 将棋盘状态编码为6@10x10张量 """
 def encode_observation(observation: Dict[str, object]) -> Observation:
     side_to_move = int(observation["side_to_move"])
     squares = observation["squares"]
@@ -139,15 +139,16 @@ def encode_observation(observation: Dict[str, object]) -> Observation:
 
     return encoded
 
-
+""" 编码通道模板定义（张量结构：6@10x10） """
 def empty_observation() -> Observation:
     return [
         [[0 for _col in range(BOARD_SIZE)] for _row in range(BOARD_SIZE)]
         for _channel in range(OBSERVATION_CHANNELS)
     ]
 
-
+""" 将输入棋子归属到正确的编码通道 """
 def piece_channel(piece: int, side_to_move: int) -> int:
+    # 灵活判断己方/对方
     if side_to_move == BLACK_SIDE:
         if piece == BLACK_MAN:
             return 0
@@ -169,7 +170,7 @@ def piece_channel(piece: int, side_to_move: int) -> int:
 
     raise ValueError(f"invalid piece or side: piece={piece}, side={side_to_move}")
 
-
+""" 将棋盘坐标转换为棋盘状态编码的行列索引 """
 def square_to_coord(square_id: int) -> Tuple[int, int]:
     if square_id < 1 or square_id > SQUARE_COUNT:
         raise ValueError(f"square_id must be in 1..50: {square_id}")
@@ -180,7 +181,7 @@ def square_to_coord(square_id: int) -> Tuple[int, int]:
     col = offset * 2 + (1 if row % 2 == 0 else 0)
     return row, col
 
-
+""" 黑白方的视角转换，均统一为“向上前进” """
 def perspective_square_id(square_id: int, side_to_move: int) -> int:
     if square_id < 1 or square_id > SQUARE_COUNT:
         raise ValueError(f"square_id must be in 1..50: {square_id}")

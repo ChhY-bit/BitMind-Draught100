@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Sequence
@@ -36,6 +38,7 @@ def _build_sample_index(
     sources: Sequence[DataSource],
     validate: bool = False,
     cache_in_memory: bool = True,
+    show_progress: bool = True,
 ) -> tuple[list[_SampleIndex], list[dict[str, object]] | None]:
     """Scan JSONL files and record byte offsets for random access.
 
@@ -47,39 +50,74 @@ def _build_sample_index(
     Returns ``(index, cache)`` where *cache* is a list of pre-parsed
     sample dicts when *cache_in_memory* is True, or ``None`` otherwise.
     """
-    index: list[_SampleIndex] = []
-    cache: list[dict[str, object]] | None = [] if cache_in_memory else None
+    # Resolve all files first so we can report progress by byte position.
+    file_entries: list[tuple[int, Path]] = []
     for source_index, source in enumerate(sources):
         validate_data_source(source)
         for file_path in resolve_jsonl_files([source.path]):
-            with open(file_path, 'rb') as f:
-                while True:
-                    offset = f.tell()
-                    line = f.readline()
-                    if not line:
-                        break
-                    line_str = line.decode('utf-8').strip()
-                    if not line_str:
-                        continue
+            file_entries.append((source_index, file_path))
 
-                    sample: dict[str, object] | None = None
-                    if validate or cache_in_memory:
-                        sample = json.loads(line_str)
-                        if not isinstance(sample, dict):
-                            raise ValueError(
-                                f"sample must be a JSON object: {file_path}:{offset}"
-                            )
-                    if validate and sample is not None:
-                        validate_training_sample(sample, len(index))
+    total_bytes = 0
+    for _, file_path in file_entries:
+        try:
+            total_bytes += os.path.getsize(str(file_path))
+        except OSError:
+            pass
 
-                    if cache is not None and sample is not None:
-                        cache.append(sample)
+    index: list[_SampleIndex] = []
+    cache: list[dict[str, object]] | None = [] if cache_in_memory else None
+    bytes_read = 0
+    last_pct = -1
 
-                    index.append(_SampleIndex(
-                        file_path=str(file_path),
-                        byte_offset=offset,
-                        source_index=source_index,
-                    ))
+    for source_index, file_path in file_entries:
+        with open(file_path, 'rb') as f:
+            while True:
+                offset = f.tell()
+                line = f.readline()
+                if not line:
+                    break
+                bytes_read += len(line)
+                line_str = line.decode('utf-8').strip()
+                if not line_str:
+                    continue
+
+                sample: dict[str, object] | None = None
+                if validate or cache_in_memory:
+                    sample = json.loads(line_str)
+                    if not isinstance(sample, dict):
+                        raise ValueError(
+                            f"sample must be a JSON object: {file_path}:{offset}"
+                        )
+                if validate and sample is not None:
+                    validate_training_sample(sample, len(index))
+
+                if cache is not None and sample is not None:
+                    cache.append(sample)
+
+                index.append(_SampleIndex(
+                    file_path=str(file_path),
+                    byte_offset=offset,
+                    source_index=source_index,
+                ))
+
+                # Progress display (stderr so it doesn't pollute stdout).
+                if show_progress and total_bytes > 0:
+                    pct = int(bytes_read * 100 / total_bytes)
+                    if pct - last_pct >= 5:  # every 5 % to limit noise
+                        mb_read = bytes_read // (1024 * 1024)
+                        mb_total = total_bytes // (1024 * 1024)
+                        print(
+                            f"\r  loading dataset: {pct}% ({mb_read}/{mb_total} MB)  ",
+                            end="", file=sys.stderr, flush=True,
+                        )
+                        last_pct = pct
+
+    if show_progress and total_bytes > 0:
+        print(
+            f"\r  loading dataset: 100% — {len(index)} samples  ",
+            file=sys.stderr, flush=True,
+        )
+
     return index, cache
 
 
@@ -148,10 +186,12 @@ class DraughtsJsonlDataset:
         paths: Sequence[str],
         validate: bool = False,
         cache_in_memory: bool = True,
+        show_progress: bool = True,
     ) -> None:
         self.sources = [DataSource(path=str(path)) for path in paths]
         self._index, self._cache = _build_sample_index(
             self.sources, validate=validate, cache_in_memory=cache_in_memory,
+            show_progress=show_progress,
         )
 
     @classmethod
@@ -160,11 +200,13 @@ class DraughtsJsonlDataset:
         sources: Sequence[DataSource],
         validate: bool = False,
         cache_in_memory: bool = True,
+        show_progress: bool = True,
     ) -> "DraughtsJsonlDataset":
         dataset = cls.__new__(cls)
         dataset.sources = list(sources)
         dataset._index, dataset._cache = _build_sample_index(
             dataset.sources, validate=validate, cache_in_memory=cache_in_memory,
+            show_progress=show_progress,
         )
         return dataset
 

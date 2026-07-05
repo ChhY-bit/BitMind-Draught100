@@ -44,13 +44,14 @@ class _DraughtsState(ctypes.Structure):
         ("side_to_move", ctypes.c_ubyte),
     ]
 
-
+# 定义走法的结构
 class _DraughtsMove(ctypes.Structure):
+    # 从C引擎获取信息
     _fields_ = [
-        ("path", ctypes.c_ubyte * DRAUGHTS_MAX_MOVE_PATH),
-        ("path_len", ctypes.c_ubyte),
-        ("captures", ctypes.c_ubyte * DRAUGHTS_MAX_MOVE_CAPTURES),
-        ("capture_count", ctypes.c_ubyte),
+        ("path", ctypes.c_ubyte * DRAUGHTS_MAX_MOVE_PATH),  # 最大路径总点数
+        ("path_len", ctypes.c_ubyte),   # 实际路径总点数
+        ("captures", ctypes.c_ubyte * DRAUGHTS_MAX_MOVE_CAPTURES),  # 最大吃子点数
+        ("capture_count", ctypes.c_ubyte),  # 实际吃子点数
     ]
 
 
@@ -81,6 +82,7 @@ class _DraughtsStepResult(ctypes.Structure):
     ]
 
 
+# 定义走法的Python形式
 @dataclass(frozen=True)
 class Move:
     action_id: int
@@ -160,6 +162,7 @@ def _check_result(result: int, function_name: str) -> None:
         raise RuntimeError(f"{function_name} failed with C error code {result}")
 
 
+# 将由C读取的走法信息封装为Python结构
 def _move_from_c(action_id: int, move: _DraughtsMove) -> Move:
     path = tuple(int(move.path[i]) for i in range(int(move.path_len)))
     captures = tuple(int(move.captures[i]) for i in range(int(move.capture_count)))
@@ -180,7 +183,7 @@ def _observation_to_dict(observation: _DraughtsObservation) -> Dict[str, object]
 
 
 class DraughtsEnv:
-    """Small Python wrapper around the C draughts environment interface."""
+    # Small Python wrapper around the C draughts environment interface.
 
     def __init__(self, library_path: Optional[str] = None) -> None:
         self._lib = _load_library(library_path)
