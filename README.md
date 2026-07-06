@@ -40,6 +40,18 @@ CUDA_VISIBLE_DEVICES=1 PYTHONPATH=interface:. python3 scripts/selfplay.py \
   --games 2000 --opening-random-plies 6 --device cuda --output data_1.jsonl --seed 123
 ```
 
+**多进程并行自博弈**：项目根目录提供了脚本 `run_selfplay_cuda0.sh` 和 `run_selfplay_cuda1.sh`，每张 GPU 上同时跑多个 selfplay 进程，利用 CUDA 流交错执行提升 GPU 利用率。所有参数均可通过环境变量覆盖：
+
+```bash
+# 默认：每卡 12 进程 × 500 局，可在启动时调整
+GAMES=2000 NUM_WORKERS=8 CHECKPOINT=trainer/checkpoints/round6/best.pt \
+  ./run_selfplay_cuda0.sh &
+./run_selfplay_cuda1.sh &
+wait
+```
+
+该方案不依赖 MCTS 内部批量推理——每个进程独立做顺序搜索，多进程并发即可让 GPU 饱和。
+
 ---
 
 ## 快速开始

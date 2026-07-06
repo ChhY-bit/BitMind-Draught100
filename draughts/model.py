@@ -49,6 +49,7 @@ class CandidateMoveNet(nn.Module):
             nn.Linear(self.config.move_embedding_dim, self.config.move_embedding_dim),
             nn.ReLU(),
         )
+        # 定义Policy头的网络结构
         self.score_head = nn.Sequential(
             nn.Linear(
                 self.config.board_feature_dim + self.config.move_embedding_dim,

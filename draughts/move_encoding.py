@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from typing import Dict, List, Sequence
 
 # 引入底层走法结构
@@ -25,9 +26,14 @@ def encode_move(move: Dict[str, object], side_to_move: int = BLACK_SIDE) -> List
     if not path:
         raise ValueError("move path must not be empty")
     if len(path) > MAX_PATH_POINTS:
-        raise ValueError(f"move path length {len(path)} exceeds {MAX_PATH_POINTS}")
+        warnings.warn(f"move path length {len(path)} exceeds {MAX_PATH_POINTS}, truncating")
+        # Keep start, as many intermediate points as possible, and the true end.
+        path = path[:MAX_PATH_POINTS - 1] + [path[-1]]
+        if captures:
+            captures = captures[:MAX_PATH_POINTS - 2] if len(captures) > MAX_PATH_POINTS - 2 else captures
     if len(captures) > MAX_CAPTURES:
-        raise ValueError(f"capture count {len(captures)} exceeds {MAX_CAPTURES}")
+        warnings.warn(f"capture count {len(captures)} exceeds {MAX_CAPTURES}, truncating")
+        captures = captures[:MAX_CAPTURES]
 
     # 根据己方/对方灵活处理：
     path = [perspective_square_id(square, side_to_move) for square in path]

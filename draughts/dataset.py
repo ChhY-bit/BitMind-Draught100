@@ -286,7 +286,7 @@ def training_item_from_sample(
             if policy_target_probs is not None
             else None
         ),
-        "value_target": int(sample["value_target"]),
+        "value_target": int(sample["value_target"]),    # 提取标签
         "selected_policy_prob": float(sample.get("selected_policy_prob", 1.0)),
         "behavior_temperature": float(sample.get("temperature", 1.0)),
         "behavior_value": float(sample.get("predicted_value", 0.0)),
@@ -344,7 +344,7 @@ def validate_training_sample(sample: Dict[str, object], index: int = -1) -> None
         raise ValueError(f"{prefix}selected_action_id out of range")
     if int(action_mask[selected_action_id]) != 1:
         raise ValueError(f"{prefix}selected action must be enabled in action_mask")
-    if int(value_target) not in {-1, 0, 1}:
+    if int(value_target) not in {-1, 0, 1}:     # 对数据的局面进行硬校验，分别表示负、平、胜
         raise ValueError(f"{prefix}value_target must be -1, 0, or 1")
     if not isinstance(legal_moves, list) or not legal_moves:
         raise ValueError(f"{prefix}legal_moves must be a non-empty list")

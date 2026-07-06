@@ -537,6 +537,7 @@ def compute_loss(
     # Policy loss: use soft targets (KL divergence) when available,
     # falling back to hard-label cross-entropy for legacy data.
     policy_logits = output["policy_logits"]  # [B, M]
+    # 根据policy_target_probs选择硬标签或软标签
     if "policy_target_probs" in batch and batch["policy_target_probs"] is not None:
         policy_loss_per_sample = soft_cross_entropy(
             policy_logits,
