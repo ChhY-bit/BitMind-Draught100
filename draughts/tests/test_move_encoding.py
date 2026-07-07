@@ -61,16 +61,17 @@ class MoveEncodingTests(unittest.TestCase):
 
         self.assertEqual(selected_move_index(legal_moves, legal_moves[1]), 1)
 
-    def test_encode_rejects_too_long_move(self):
+    def test_truncates_too_long_move(self):
         move = {
             "action_id": 9,
-            "path": list(range(1, MAX_PATH_POINTS + 2)),
+            "path": list(range(1, MAX_PATH_POINTS + 2)),  # 11 squares → exceeds 10
             "captures": [],
             "is_capture": False,
         }
-
-        with self.assertRaises(ValueError):
-            encode_move(move)
+        with self.assertWarns(UserWarning):
+            result = encode_move(move)
+        # Path truncated to MAX_PATH_POINTS; start + end preserved.
+        self.assertEqual(len(result), MOVE_FEATURE_DIM)
 
 
 if __name__ == "__main__":
