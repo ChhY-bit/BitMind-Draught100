@@ -7,15 +7,11 @@ import torch
 from draughts.agents import (
     AlphaBetaAgent,
     AlphaBetaConfig,
-    MaterialConfig,
-    MaterialAgent,
     RandomAgent,
     SupervisedAgent,
     evaluate_enhanced_position,
     load_alphabeta_config,
-    load_material_config,
     make_agent,
-    material_score_for_side,
 )
 from draughts_env import Move
 from draughts.model import CandidateMoveNet, ModelConfig
@@ -33,9 +29,7 @@ class AgentTests(unittest.TestCase):
 
     def test_make_agent(self):
         self.assertIsInstance(make_agent("random", seed=1), RandomAgent)
-        self.assertIsInstance(make_agent("material", seed=1), MaterialAgent)
         self.assertIsInstance(make_agent("alphabeta", seed=1), AlphaBetaAgent)
-        self.assertIsInstance(make_agent("alphabeta_plus", seed=1), AlphaBetaAgent)
 
         with self.assertRaises(ValueError):
             make_agent("unknown")
@@ -59,50 +53,6 @@ class AgentTests(unittest.TestCase):
     def test_make_supervised_agent_requires_checkpoint(self):
         with self.assertRaises(ValueError):
             make_agent("supervised")
-
-    def test_material_score_for_side(self):
-        observation = {"squares": [0] * 50}
-        observation["squares"][0] = 1
-        observation["squares"][1] = 2
-        observation["squares"][2] = 3
-
-        self.assertEqual(material_score_for_side(observation, 0), 250)
-        self.assertEqual(material_score_for_side(observation, 1), -250)
-        self.assertEqual(
-            material_score_for_side(observation, 0, MaterialConfig(man_value=10, king_value=30)),
-            30,
-        )
-
-    def test_material_agent_prefers_best_material_after_move(self):
-        actions = [
-            Move(action_id=0, path=(16, 21), captures=()),
-            Move(action_id=1, path=(21, 32), captures=(27,)),
-        ]
-        observation = {"squares": [0] * 50, "side_to_move": 0}
-        agent = MaterialAgent(seed=1)
-        env = FakeMaterialEnv(
-            {
-                0: {"squares": [1, 3], "game_result": 0},
-                1: {"squares": [1], "game_result": 0},
-            }
-        )
-
-        self.assertEqual(agent.select_action(observation, actions, env), 1)
-
-    def test_load_material_config_from_yaml_subset(self):
-        with TemporaryDirectory() as tmp_dir:
-            path = Path(tmp_dir) / "material.yaml"
-            path.write_text(
-                "man_value: 10\nking_value: 40\nwin_value: 999\ndraw_value: 5\n",
-                encoding="utf-8",
-            )
-
-            config = load_material_config(str(path))
-
-        self.assertEqual(config.man_value, 10)
-        self.assertEqual(config.king_value, 40)
-        self.assertEqual(config.win_value, 999)
-        self.assertEqual(config.draw_value, 5)
 
     def test_load_alphabeta_config_from_yaml(self):
         with TemporaryDirectory() as tmp_dir:

@@ -22,7 +22,6 @@ if str(PROJECT_ROOT) not in sys.path:
 from draughts_env import DraughtsEnv, Move  # noqa: E402
 from draughts.agents import (  # noqa: E402
     AlphaBetaAgent,
-    MaterialAgent,
     MCTSAgent,
     SupervisedAgent,
 )
@@ -186,9 +185,7 @@ RESULT_LABELS = {
 PLAYER_KIND_LABELS = {
     "human": "人类",
     "random": "随机AI",
-    "material": "材料AI",
     "alphabeta": "AlphaBeta AI",
-    "alphabeta_plus": "AlphaBeta+ AI",
     "supervised": "监督模型AI",
     "mcts": "MCTS AI",
 }
@@ -198,9 +195,7 @@ PLAYER_LABEL_TO_KIND = {v: k for k, v in PLAYER_KIND_LABELS.items()}
 PLAYER_KIND_OPTIONS = (
     "人类",
     "随机AI",
-    "材料AI",
     "AlphaBeta AI",
-    "AlphaBeta+ AI",
     "监督模型AI",
     "MCTS AI",
 )
@@ -263,28 +258,6 @@ class SupervisedPlayer:
 
 
 @dataclass
-class MaterialPlayer:
-    name: str
-    kind: str = "material"
-
-    def __post_init__(self) -> None:
-        self.agent = MaterialAgent()
-
-    def is_human(self) -> bool:
-        return False
-
-    def choose_move(self, moves: Sequence[Move], env: Optional[DraughtsEnv] = None) -> Optional[Move]:
-        if not moves:
-            return None
-        if env is None:
-            raise ValueError("材料AI需要当前棋局环境")
-        wrapped = GuiEnvAdapter(env)
-        obs = wrapped.raw_observation()
-        action_id = self.agent.select_action(obs, moves, wrapped)
-        return find_move_by_action_id(moves, action_id)
-
-
-@dataclass
 class AlphaBetaPlayer:
     name: str
     kind: str = "alphabeta"
@@ -300,30 +273,6 @@ class AlphaBetaPlayer:
             return None
         if env is None:
             raise ValueError("AlphaBeta AI需要当前棋局环境")
-        wrapped = GuiEnvAdapter(env)
-        obs = wrapped.raw_observation()
-        action_id = self.agent.select_action(obs, moves, wrapped)
-        return find_move_by_action_id(moves, action_id)
-
-
-@dataclass
-class AlphaBetaPlusPlayer:
-    name: str
-    kind: str = "alphabeta_plus"
-
-    def __post_init__(self) -> None:
-        import draughts.agents as ag
-
-        self.agent = ag.make_agent("alphabeta_plus")
-
-    def is_human(self) -> bool:
-        return False
-
-    def choose_move(self, moves: Sequence[Move], env: Optional[DraughtsEnv] = None) -> Optional[Move]:
-        if not moves:
-            return None
-        if env is None:
-            raise ValueError("AlphaBeta+ AI需要当前棋局环境")
         wrapped = GuiEnvAdapter(env)
         obs = wrapped.raw_observation()
         action_id = self.agent.select_action(obs, moves, wrapped)
@@ -370,7 +319,7 @@ class MCTSPlayer:
 @dataclass
 class GuiEnvAdapter:
     """Wraps a C-level DraughtsEnv so it exposes the interface expected by
-    materialist / alphabeta / MCTS agents (clone, step, raw_observation,
+    alphabeta / MCTS agents (clone, step, raw_observation,
     legal_actions)."""
 
     _env: DraughtsEnv
@@ -811,12 +760,8 @@ class GameController:
             return HumanPlayer(f"{side_label}玩家")
         if kind == "random":
             return RandomPlayer(f"{side_label}随机AI", self.rng)
-        if kind == "material":
-            return MaterialPlayer(f"{side_label}材料AI")
         if kind == "alphabeta":
             return AlphaBetaPlayer(f"{side_label}AlphaBeta AI")
-        if kind == "alphabeta_plus":
-            return AlphaBetaPlusPlayer(f"{side_label}AlphaBeta+ AI")
         if kind == "supervised":
             if not checkpoint_path:
                 raise ValueError(f"{side_label}监督模型AI需要选择 checkpoint 文件")

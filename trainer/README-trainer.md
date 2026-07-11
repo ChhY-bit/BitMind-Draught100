@@ -14,6 +14,7 @@ PYTHONPATH=interface:. python3 trainer/<script>.py [args]
 
 ```bash
 PYTHONPATH=interface:. python3 trainer/train_supervised.py data \
+  --no-cache \
   --resume trainer/checkpoints/candidate_move_net_latest.pt \
   --checkpoint-dir trainer/checkpoints --device cpu
 ```
@@ -31,7 +32,7 @@ PYTHONPATH=interface:. python3 trainer/train_supervised.py data \
 | `--epochs` | int | (YAML 中的值) | 覆盖配置文件中的训练轮数 |
 | `--batch-size` | int | (YAML 中的值) | 覆盖配置文件中的批次大小 |
 | `--lr` | float | (YAML 中的值) | 覆盖配置文件中的学习率 |
-| `--no-cache` | flag | off | 不预加载 JSONL 到内存，省 RAM 但略慢 |
+| `--no-cache` | flag | off | **推荐始终开启**。不将 JSONL 全部加载到内存，按需从磁盘逐行读取。MCTS 自博弈数据通常数 GB，不加此参数极易 OOM。 |
 | `--save-every-epoch` | flag | off | 每个 epoch 都保存 checkpoint |
 | `--source` | str | none | 数据源权重：`路径:policy_w:value_w:标签`（可重复） |
 | `--source-config` | path | none | 数据源权重 YAML 配置文件 |
@@ -75,12 +76,13 @@ loss        = policy_loss + value_loss_weight * value_loss
 
 ```bash
 PYTHONPATH=interface:. python3 trainer/train_supervised.py \
+  --no-cache \
   --source data/alphabeta_selfplay.jsonl:1.0:1.0:alphabeta \
   --source data/search_improved.jsonl:1.0:0.5:improved \
   --checkpoint-dir trainer/checkpoints --device cpu
 ```
 
-`policy_weight=0` 时该来源只训 value，`value_weight=0` 时只训 policy。也可用 `--source-config` 指定 YAML 配置文件，参见 `trainer/config/data_sources.yaml`。
+`policy_weight=0` 时该来源只训 value，`value_weight=0` 时只训 policy。也可用 `--source-config` 指定 YAML 配置文件，参见 [trainer/config/data_sources.yaml](config/data_sources.yaml)。
 
 ### 配置参数（`config/supervised.yaml`）
 
@@ -98,16 +100,18 @@ PYTHONPATH=interface:. python3 trainer/train_supervised.py \
 
 以上参数均可被命令行 `--epochs`、`--batch-size`、`--lr` 覆盖。
 
-### 数据加载优化
+### 数据加载
 
-训练管线已做以下优化，最大化 GPU 利用率：
+训练管线做了以下优化以最大化 GPU 利用率：
 
 | 优化项 | 说明 |
 |--------|------|
-| 内存缓存 | `DraughtsJsonlDataset` 默认 `cache_in_memory=True`，构造时一次性载入全量 JSON，训练零磁盘 I/O |
+| 内存缓存 | 小数据集（< 500 MB）可省略 `--no-cache`，全量预加载到内存避免磁盘 I/O。大数据集务必使用 `--no-cache`，按需从磁盘逐行读取，内存占用几乎可忽略 |
 | Worker 内 tensor 化 | `collate_batch` 在 DataLoader worker 进程中直接构建 `torch.Tensor`，通过共享内存传 batch，消除 pickle 瓶颈 |
 | `pin_memory=True` | 加速 CPU→GPU 数据传输 |
 | `prefetch_factor=4` | 每个 worker 预取 4 个 batch，GPU 始终有数据待命 |
+
+> **`--no-cache` 是大多数场景的正确选择。** 不开启内存缓存时，训练速度几乎不受影响（瓶颈在 GPU 前向/反向传播，而非磁盘读取）。仅当数据集极小（几百 MB）且反复训练时才建议省略此参数。
 
 **调参建议**：
 

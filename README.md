@@ -1,6 +1,6 @@
 # BitMind-Draught100
 
-100 格国际跳棋 AI——使用神经网络引导 MCTS 搜索，支持批量推理加速，构建超越传统 AlphaBeta 的博弈智能体。
+100 格国际跳棋 AI——使用神经网络引导 MCTS 搜索，构建超越传统 AlphaBeta 的博弈智能体。
 
 ## 软硬件要求
 
@@ -14,45 +14,6 @@
 | 可选 | — | tkinter（GUI） |
 
 唯一外部 Python 依赖是 PyTorch，其余全部使用标准库。
-
-### 设备指定
-
-所有脚本通过 `--device` 参数选择计算设备：
-
-```bash
---device cpu       # 仅 CPU
---device cuda      # GPU 0（等价于 cuda:0）
---device cuda:0    # 指定 GPU 0
---device cuda:1    # 指定 GPU 1
-```
-
-多卡并行时建议用 `CUDA_VISIBLE_DEVICES` 隔离进程：
-
-```bash
-# 终端 1：绑 GPU 0
-CUDA_VISIBLE_DEVICES=0 PYTHONPATH=interface:. python3 scripts/selfplay.py \
-  --black mcts --white mcts --black-checkpoint ckpt.pt --white-checkpoint ckpt.pt \
-  --games 2000 --opening-random-plies 6 --device cuda --output data_0.jsonl --seed 42
-
-# 终端 2：绑 GPU 1
-CUDA_VISIBLE_DEVICES=1 PYTHONPATH=interface:. python3 scripts/selfplay.py \
-  --black mcts --white mcts --black-checkpoint ckpt.pt --white-checkpoint ckpt.pt \
-  --games 2000 --opening-random-plies 6 --device cuda --output data_1.jsonl --seed 123
-```
-
-**多进程并行自博弈**：项目根目录提供了脚本 `run_selfplay_cuda0.sh` 和 `run_selfplay_cuda1.sh`，每张 GPU 上同时跑多个 selfplay 进程，利用 CUDA 流交错执行提升 GPU 利用率。所有参数均可通过环境变量覆盖：
-
-```bash
-# 默认：每卡 12 进程 × 500 局，可在启动时调整
-GAMES=2000 NUM_WORKERS=8 CHECKPOINT=trainer/checkpoints/round6/best.pt \
-  ./run_selfplay_cuda0.sh &
-./run_selfplay_cuda1.sh &
-wait
-```
-
-该方案不依赖 MCTS 内部批量推理——每个进程独立做顺序搜索，多进程并发即可让 GPU 饱和。
-
----
 
 ## 快速开始
 
@@ -70,27 +31,20 @@ make interface
 
 ### 2. 测试
 
-编译完后立即验证各层是否正常。
-
-先确认 C 接口可用（不依赖 torch）：
+编译完后验证各层是否正常。
 
 ```bash
+# C 接口（不依赖 torch，先确认底层没问题）
 make interface-test
 ```
-
-再验证核心库（需要 torch）：
-
 ```bash
-make draughts-test
-```
-
-一次性跑完全部测试：
-
-```bash
+# Python 全线：draughts（核心库）→ trainer（训练器）→ scripts（脚本）
 make all-python-test
 ```
 
-### 3. 路线一：AlphaBeta 蒸馏训练
+> `make all-python-test` 等价于依次执行 `make draughts-test`、`make trainer-test`、`make scripts-test`，逐层排查问题时可以单独跑某一个。日常开发改完代码后，一行跑完：`make interface-test && make all-python-test`
+
+### 3. 阶段一：AlphaBeta 蒸馏训练
 
 先让 AlphaBeta 自己跟自己下棋产生局面，再用更强的 AlphaBeta 给每个局面打分，最后用这些"标准答案"训练神经网络。这一步产出一个具备基本棋感的基座网络。
 
@@ -103,26 +57,35 @@ PYTHONPATH=interface:. python3 scripts/selfplay.py \
   --output data/selfplay.jsonl
 ```
 
-**第二步**：用更强的 AlphaBeta（depth=3）给每个局面重新评分，生成软标签。
+> **参数说明**：`--black`/`--white` 指定双方 agent，`--alphabeta-depth` 覆盖搜索深度，`--opening-random-plies` 控制开局随机化。完整参数表见 [scripts/README-scripts.md](scripts/README-scripts.md)。
+>
+> 大规模生成数据时，可使用多进程脚本 `./run/selfplay_ab.sh` 并行加速，详见[多进程提升利用率](#多进程提升利用率)。
+
+**第二步**：用更强的 AlphaBeta（depth=7）给每个局面重新评分，生成软标签。
 
 ```bash
 PYTHONPATH=interface:. python3 scripts/search_improve.py data/ \
-  --output data/improved_soft.jsonl \
-  --alphabeta-depth 3 --temperature 100 --min-score-margin 20 --seed 42
+  --output data/improved_soft.jsonl --log-interval 100 \
+  --alphabeta-depth 7 --temperature 100 --min-score-margin 20 --seed 42
 ```
+
+> **参数说明**：`--alphabeta-depth` 设置 Teacher 搜索深度，`--min-score-margin` 过滤低置信度局面，`--temperature` 控制软标签平滑度。完整参数表见 [scripts/README-scripts.md](scripts/README-scripts.md)。
 
 **第三步**：训练神经网络。
 
 ```bash
 PYTHONPATH=interface:. python3 trainer/train_supervised.py \
-  data/improved_soft.jsonl --device cuda
+  data/improved_soft.jsonl --no-cache --device cuda \
+  --checkpoint-dir trainer/checkpoints --seed 42
 ```
+
+> **参数说明**：`--no-cache` 用于避免 OOM（详见下方注意事项），`--checkpoint-dir` 指定网络数据保存路径，`--seed` 保证训练可复现，`--epochs` 设置训练轮数，`--device` 选择计算设备。完整参数表见 [trainer/README-trainer.md](trainer/README-trainer.md)。
 
 训练完成后，checkpoint 保存在 `trainer/checkpoints/candidate_move_net_best.pt`。
 
-> **大数据集内存优化**：默认会将整个 JSONL 预加载到内存。如果数据超过 1GB，建议加 `--no-cache` 参数，数据将按需从磁盘逐行读取，内存占用从 ~180GB 降至几乎可忽略。详见 `trainer/README-trainer.md`。
+> **重要**：训练时务必加 `--no-cache`。默认情况下，训练器会将整个 JSONL 数据集全部加载到内存中以便加速。对于 MCTS 自博弈产生的大数据集（通常数 GB），不加此参数会迅速耗尽系统 RAM。加上 `--no-cache` 后，数据按需从磁盘逐行读取，内存占用几乎可忽略，训练速度损失极小。详见 [trainer/README-trainer.md](trainer/README-trainer.md)。
 
-### 4. 路线二：MCTS 自博弈训练
+### 4. 阶段二：MCTS 自博弈训练
 
 路线一的网络训练好后，就可以用它来做 MCTS 搜索。MCTS 自博弈时，搜索过程本身就是一次"深度思考"——产生的 visit count 分布天然是高质量的训练标签，不需要再让 AlphaBeta 来打分。
 
@@ -133,27 +96,21 @@ PYTHONPATH=interface:. python3 scripts/selfplay.py \
   --black mcts --white mcts \
   --black-checkpoint trainer/checkpoints/candidate_move_net_best.pt \
   --white-checkpoint trainer/checkpoints/candidate_move_net_best.pt \
-  --games 2000 --opening-random-plies 6 --device cuda \
-  --output data/selfplay_mcts.jsonl
+  --games 2000 --opening-random-plies 18 --device cuda \
+  --output data/selfplay_mcts.jsonl --seed 42
 ```
 
-> **批量推理调参**：如需调整 batch_size，通过 `--mcts-config` 传入自定义 YAML：
-> ```bash
-> # CPU 模式示例（小 batch）
-> PYTHONPATH=interface:. python3 scripts/selfplay.py \
->   --black mcts --white mcts \
->   --black-checkpoint ckpt.pt --white-checkpoint ckpt.pt \
->   --mcts-config draughts/config/mcts.yaml \
->   --games 100 --device cpu
-> ```
+> **参数说明**：`--black-checkpoint`/`--white-checkpoint` 指定双方网络权重，`--seed` 保证对局可复现，`--mcts-config` 可传入自定义 MCTS 参数（sims、c_puct、温度等）。完整参数表见 [scripts/README-scripts.md](scripts/README-scripts.md)。
 
 **第二步**：从头训练新一代网络。
 
 ```bash
 PYTHONPATH=interface:. python3 trainer/train_supervised.py \
-  data/selfplay_mcts.jsonl --epochs 10 --device cuda \
-  --checkpoint-dir trainer/checkpoints/round1
+  data/selfplay_mcts.jsonl --no-cache --epochs 10 --device cuda \
+  --checkpoint-dir trainer/checkpoints/round1 --seed 42
 ```
+
+> **参数说明**：`--checkpoint-dir` 指定本轮 checkpoint 保存目录，`--seed` 保证训练可复现，`--epochs 10` 是 Phase 3 自博弈训练的推荐值。完整参数表见 [trainer/README-trainer.md](trainer/README-trainer.md)。
 
 路线二可以反复执行——每轮用最新网络做 MCTS 自博弈，产出的数据训练下一代网络，形成自增强闭环。详见下方[多轮迭代](#多轮迭代)。
 
@@ -163,27 +120,23 @@ MCTS 对决 AlphaBeta，测试棋力：
 
 ```bash
 PYTHONPATH=interface:. python3 scripts/arena.py \
-  --black mcts --white alphabeta_plus \
+  --black mcts --white alphabeta \
   --black-checkpoint trainer/checkpoints/candidate_move_net_best.pt \
-  --games 100 --device cuda
+  --alphabeta-depth 3 --games 100 --device cuda --seed 42
 ```
 
-两代网络对比（同样 MCTS 搜索，不同网络权重）：
+> **参数说明**：`--black`/`--white` 指定对战双方（支持所有 agent 类型），`--alphabeta-depth` 设置 AlphaBeta 对手深度，`--seed` 保证结果可复现。完整参数表见 [scripts/README-scripts.md](scripts/README-scripts.md)。
+
+两代网络对比（同样 MCTS 搜索，不同网络）：
 
 ```bash
 PYTHONPATH=interface:. python3 scripts/arena.py \
   --black mcts --white mcts \
   --black-checkpoint new.pt --white-checkpoint old.pt \
-  --games 100 --device cuda
+  --games 100 --device cuda --seed 42
 ```
 
-自动晋升评测，判断新 checkpoint 是否值得替换基线：
-
-```bash
-PYTHONPATH=interface:. python3 scripts/compare_checkpoints.py \
-  --candidate new.pt --baseline baseline.pt \
-  --preset standard --device cuda
-```
+> **参数说明**：双方同为 `mcts` 但加载不同 checkpoint，可评测两代网络棋力差距，`--seed` 保证结果可复现。完整参数表见 [scripts/README-scripts.md](scripts/README-scripts.md)。
 
 所有评测支持 `--opening-random-plies` 参数来随机化开局，避免固定开局的偏差。
 
@@ -216,52 +169,68 @@ gui/             Tkinter 棋盘界面
 | 名称 | 类型 | 说明 |
 |------|------|------|
 | `random` | 随机 | 随机走子，基线 |
-| `material` | 启发式 | 材料+位置启发式，一步前瞻 |
-| `alphabeta` | AlphaBeta | depth=2 搜索 |
-| `alphabeta_plus` | AlphaBeta | depth=3 搜索，最强手工基线 |
+| `alphabeta` | AlphaBeta | Alpha-Beta 搜索，深度可通过 `--alphabeta-depth` 或 YAML 配置 |
 | `supervised` | 网络 greedy | 加载网络权重，直接选最高分走法 |
-| `mcts` | MCTS + 网络 | PUCT 搜索 + 批量推理，网络提供先验和价值评估 |
+| `mcts` | MCTS + 网络 | PUCT 搜索，网络提供先验和价值评估 |
 
 所有智能体通过 `make_agent("名称")` 创建。
 
 ---
 
-## MCTS 批量推理
+## 设备指定
 
-MCTS 搜索支持**批量推理**：将多个叶子节点的网络评估打包为一个 batch，一次 GPU 前向传播同时处理，大幅减少 CUDA kernel 启动开销。
+所有脚本通过 `--device` 参数选择计算设备：
 
-### 原理
-
-不再逐一走"选子→推理→回传"串行循环，而是：
-
-1. **收集一批叶子**：用虚拟损失（virtual loss）把同一批次的多条路径推向不同分支
-2. **一次批量推理**：将所有叶子局面打包为 `[B, 6, 10, 10]` 张量，一次 forward 输出 B 个 policy + value
-3. **分别回传**：撤销虚拟损失，将真实值沿各自路径回传
-
-### 配置
-
-关键参数在 `draughts/config/mcts.yaml`：
-
-```yaml
-num_simulations: 800   # 总模拟次数（推理加速后可大幅提升）
-batch_size: 64         # 每批收集的叶子数
-virtual_loss_value: -1.0  # 虚拟损失值（-1.0 推开效果最强）
+```bash
+--device cpu       # 仅 CPU
+--device cuda      # GPU 0（等价于 cuda:0）
+--device cuda:0    # 指定 GPU 0
+--device cuda:1    # 指定 GPU 1
 ```
 
-### 调参建议
+### CUDA_VISIBLE_DEVICES vs --device
 
-| 硬件 | 推荐 batch_size | 推荐 num_simulations |
-|------|----------------|---------------------|
-| CPU 模式 | 1–8 | 80–200 |
-| GPU (≥8 GB) | 64–256 | 400–800 |
-| GPU (≥24 GB) | 128–512 | 800–1600 |
-| GPU (96 GB) | 256–1024 | 800–3200 |
+`CUDA_VISIBLE_DEVICES` 是环境变量，在进程启动前限制可见 GPU；`--device` 是代码内参数，在可见 GPU 中选择用哪张。两者结合使用时注意：`CUDA_VISIBLE_DEVICES` 会重映射 GPU 编号——物理卡 1 在进程内变成 `cuda:0`。
 
-> **注意**：`CandidateMoveNet` 模型极小（3 层 Conv + 小 MLP），即使 batch_size=512 也远未触及显存瓶颈。CPU 模式下设 batch_size=1 即为传统串行模式。
+| | `CUDA_VISIBLE_DEVICES` | `--device cuda:N` |
+|---|---|---|
+| 层面 | 环境变量，进程级 | PyTorch API 参数 |
+| 隔离性 | 物理隔离，进程看不到其他 GPU | 逻辑选择，仍能访问其他 GPU |
+| 防泄漏 | 任何 CUDA 调用都无法"漏"到其他卡 | 仅约束显式传 device 的代码路径 |
 
-### 速度预期
+多卡并行时推荐用 `CUDA_VISIBLE_DEVICES` 隔离进程：
 
-在 NVIDIA GPU 上，800 sims 批量推理（batch_size=64）相比逐次推理（batch_size=1）可获得约 **5–10 倍**加速，且模拟数可从 80 提升至 800，棋力随之增强。
+```bash
+# 终端 1：绑 GPU 0
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=interface:. python3 scripts/selfplay.py \
+  --black mcts --white mcts --black-checkpoint ckpt.pt --white-checkpoint ckpt.pt \
+  --games 2000 --opening-random-plies 6 --device cuda --output data_0.jsonl --seed 42
+
+# 终端 2：绑 GPU 1
+CUDA_VISIBLE_DEVICES=1 PYTHONPATH=interface:. python3 scripts/selfplay.py \
+  --black mcts --white mcts --black-checkpoint ckpt.pt --white-checkpoint ckpt.pt \
+  --games 2000 --opening-random-plies 6 --device cuda --output data_1.jsonl --seed 123
+```
+
+`CUDA_VISIBLE_DEVICES` 不会降低 GPU 利用率——它只是隐藏其他 GPU，被选中的 GPU 仍然完全可用。利用率取决于 workload（模型大小、进程数等）。真正影响利用率的是 GPU 上同时跑的任务数量。
+
+### 多进程提升利用率
+
+MCTS 搜索是顺序的（选子→推理→回传循环），单个进程无法让 GPU 持续饱和。项目 `run/` 目录提供了多进程并行脚本，将大批量对局拆分为多个独立进程并发执行：
+
+```bash
+# MCTS 自博弈（GPU 多进程）：每卡 8 进程 × 200 局
+GAMES=200 NUM_WORKERS=8 CHECKPOINT=trainer/checkpoints/round6/best.pt \
+  ./run/selfplay_cuda0.sh &
+./run/selfplay_cuda1.sh &
+wait
+
+# AlphaBeta 自博弈（CPU 多进程）：16 进程 × 200 局
+ALPHABETA_DEPTH=8 OPENING_RANDOM_PLIES=GAMES=200 NUM_WORKERS=16 \
+  ./run/selfplay_ab.sh
+```
+
+所有参数均可通过环境变量覆盖，每个进程独立搜索，多进程并发即可让 CPU/GPU 饱和。
 
 ---
 
@@ -292,11 +261,11 @@ for round in 1 2 3; do
     --black mcts --white mcts \
     --black-checkpoint "$ckpt" --white-checkpoint "$ckpt" \
     --games 2000 --opening-random-plies 6 --device cuda \
-    --output "data/r${round}.jsonl"
+    --output "data/r${round}.jsonl" --seed "$((42 + round))"
 
   PYTHONPATH=interface:. python3 trainer/train_supervised.py \
-    "data/r${round}.jsonl" --epochs 10 --device cuda \
-    --checkpoint-dir "trainer/checkpoints/round${round}"
+    "data/r${round}.jsonl" --no-cache --epochs 10 --device cuda \
+    --checkpoint-dir "trainer/checkpoints/round${round}" --seed "$((42 + round))"
 
   ckpt="trainer/checkpoints/round${round}/candidate_move_net_best.pt"
 done
@@ -305,10 +274,6 @@ done
 每轮从头训练，旧数据不混入，仅 checkpoint 传递到下一轮作为搜索引擎。
 
 多卡环境下可将 selfplay 拆分到不同 GPU 并行加速（详见上文[设备指定](#设备指定)），最后合并 JSONL 训练即可。
-
-> **批量推理**：MCTS 自博弈默认使用 `draughts/config/mcts.yaml` 中的 `batch_size`。
-> 在 96 GB GPU 上可设 `batch_size: 256` 或更高以获得最大吞吐。CPU 模式建议
-> `batch_size: 1`（退化为传统串行 MCTS）。详见[批量推理章节](#mcts-批量推理)。
 
 ---
 
@@ -322,6 +287,7 @@ done
 | [draughts/README-draughts.md](draughts/README-draughts.md) | 核心库参考 |
 | [trainer/README-trainer.md](trainer/README-trainer.md) | 训练器参考 |
 | [scripts/README-scripts.md](scripts/README-scripts.md) | 脚本参考 |
+| [run/README-run.md](run/README-run.md) | 多进程并行脚本 |
 | [gui/README-gui.md](gui/README-gui.md) | GUI 参考 |
 
 ---
@@ -330,6 +296,7 @@ done
 
 - 和棋规则未实现（三次重复、40 步规则），靠 `max_plies` 截断
 - `env.clone()` 仍有优化空间（move/undo 替代方案待实现）
+- MCTS 搜索为纯顺序推理（每步 simulation 单独做一次网络前向），高 sims 时单步耗时较长；多进程并发（`run/selfplay_cuda0.sh`）可弥补 GPU 利用率，但非推理加速
 - 走法编码仍在 Python 层，C 层向量化可进一步提升速度
-- reward 仅提供基础终局奖励（+1/-1/0）
-- 数据集默认全量载入内存（35K 样本约 400 MB），超大数据集可通过 `cache_in_memory=False` 关闭
+- 数据集默认全量载入内存，大数据集务必使用 `--no-cache` 避免 OOM
+- 训练仅支持单 GPU；多卡自博弈需手动启动进程隔离（`CUDA_VISIBLE_DEVICES` + 多进程）

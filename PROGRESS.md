@@ -25,8 +25,8 @@
 |------|------|------|
 | `env.py` | 训练环境，6×10×10 当前方视角编码，局面克隆 | ✅ |
 | `model.py` | CandidateMoveNet：CNN encoder + policy head + value head | ✅ |
-| `agents.py` | 6 个智能体（见下方阵容表），统一工厂函数 | ✅ |
-| `mcts.py` | MCTS + PUCT 搜索 + 批量推理 + 虚拟损失，visit count 输出可作训练软标签 | ✅ |
+| `agents.py` | 4 个智能体（见下方阵容表），统一工厂函数 | ✅ |
+| `mcts.py` | MCTS + PUCT 搜索，visit count 输出可作训练软标签 | ✅ |
 | `move_encoding.py` | 走法 → 45 维特征向量 | ✅ |
 | `dataset.py` | JSONL 加载、内存缓存、worker 内 tensor 拼批、软标签支持 | ✅ |
 
@@ -38,7 +38,6 @@
 | `scripts/selfplay.py` | 对局数据生成，MCTS agent 直接产出软标签 |
 | `scripts/search_improve.py` | AlphaBeta 对已有数据重新打分 |
 | `scripts/arena.py` | 批量对战评测 |
-| `scripts/compare_checkpoints.py` | checkpoint 自动对比与晋升判断 |
 | `gui/simple_gui.py` | Tkinter 棋盘界面，人机/机机对弈 |
 
 ## 智能体阵容
@@ -46,42 +45,37 @@
 | 名称 | 类型 | 搜索？ | 网络？ | 棋力定位 |
 |------|------|--------|--------|---------|
 | `random` | 随机 | — | — | 底层基线 |
-| `material` | 启发式 | 一步前瞻 | — | 入门级 |
-| `alphabeta` | AlphaBeta | depth=2 | — | 中等 |
-| `alphabeta_plus` | AlphaBeta | depth=3 | — | 手工最强 |
+| `alphabeta` | AlphaBeta | 可配置深度（`--alphabeta-depth`） | — | 手工基线 |
 | `supervised` | 网络 greedy | — | CandidateMoveNet | 有棋感无前瞻 |
-| `mcts` | MCTS + 网络 | 80-3200 sims（批量推理加速） | CandidateMoveNet | 当前最强 |
+| `mcts` | MCTS + 网络 | 80-3200 sims | CandidateMoveNet | 当前最强 |
 
 ## 棋力层级
 
-以下为批量推理（800 sims, batch_size=64）、无开局随机化条件下的实测结果：
+以下为无开局随机化条件下的实测结果：
 
 ```
-alphabeta_plus (depth=3)   ← 手工最强基线
+alphabeta (depth=3+)        ← 手工基线（深度可配置）
     |
 mcts (训练网络, 800sims)    ← 约 90% 胜 alphabeta (depth=2)
-    |                         批量推理 5-10x 加速，sims 从 80 → 800
     |                         100% 胜 supervised (greedy)
     |
 mcts (随机网络)             ← 约 17% 胜 alphabeta (depth=2)
     |
 supervised (greedy)         ← 0% 胜 alphabeta (depth=2)
     |
-material / random           ← 基线
+random                     ← 基线
 ```
 
-核心发现：同一网络，greedy 对 AB(d=2) 0% → MCTS(800sims) 对 AB(d=2) ≈90%。搜索 + 批量推理是棋力质变的关键。
+核心发现：同一网络，greedy 对 AB(d=2) 0% → MCTS(800sims) 对 AB(d=2) ≈90%。搜索是棋力质变的关键。
 
 ## 训练数据管线
 
 ```
 Phase 1 路线:  selfplay(AB) → search_improve(AB d=3) → train    （两步）
-Phase 3 路线:  selfplay(MCTS) → train                            （一步，MCTS 批量推理加速）
+Phase 3 路线:  selfplay(MCTS) → train                            （一步）
 ```
 
 MCTS 自博弈时，搜索返回的 visit count 分布自动写入 JSONL 的 `policy_target_probs` 字段，训练器自动识别并切换为软交叉熵损失。
-
-批量推理（`batch_size`、`virtual_loss_value`）参数在 `draughts/config/mcts.yaml` 中配置，详见 [README MCTS 章节](README.md#mcts-批量推理)。
 
 ## 已训练网络
 
@@ -92,8 +86,7 @@ MCTS 自博弈时，搜索返回的 visit count 分布自动写入 JSONL 的 `po
 ## 已知局限
 
 - 和棋规则（三次重复、40 步）未实现，靠 max_plies 截断
-- 数据全量载入内存（`cache_in_memory` 默认开启），超大数据集可关闭以节省 RAM
+- 数据集默认全量载入内存，大数据集务必使用 `--no-cache` 避免 OOM
 - `env.clone()` 仍有优化空间（move/undo 替代 clone 方案待实现）
 - 走法编码仍在 Python 层，C 层向量化可进一步提升训练和推理速度
 - 当前仅支持单 GPU 训练
-- 批量推理在 CPU 模式下加速有限（建议设 `batch_size: 1–8`）

@@ -15,8 +15,8 @@
 | `env.py` | 封装 C 引擎，提供训练环境 | `StandardDraughtsEnv`, `encode_observation` |
 | `move_encoding.py` | 候选动作 → 45 维特征向量 | `encode_legal_moves`, `move_to_dict`, `MOVE_FEATURE_DIM` |
 | `model.py` | 神经网络定义 | `CandidateMoveNet`, `ModelConfig`, `load_model_config` |
-| `agents.py` | 所有智能体类 | 6 个 Agent 类, `make_agent`, `available_agents` |
-| `mcts.py` | MCTS 搜索（PUCT + 批量推理 + 虚拟损失） | `mcts_search`, `MCTSConfig`, `MCTSNode`, `MCTSResult` |
+| `agents.py` | 所有智能体类 | 4 个 Agent 类, `make_agent`, `available_agents` |
+| `mcts.py` | MCTS 搜索（PUCT） | `mcts_search`, `MCTSConfig`, `MCTSNode`, `MCTSResult` |
 | `dataset.py` | JSONL 加载、内存缓存、tensor 拼批 | `DraughtsJsonlDataset`, `collate_batch`, `to_torch_batch` |
 
 ## 依赖层次
@@ -84,10 +84,10 @@ output = model(observation, move_features, move_mask)
 from draughts.agents import make_agent, available_agents
 
 print(available_agents())
-# ['random', 'material', 'alphabeta', 'supervised']
+# ['random', 'alphabeta', 'supervised', 'mcts']
 
-agent = make_agent("alphabeta")  # depth=2 (default)
-agent = make_agent("alphabeta", alphabeta_config_path="draughts/config/alphabeta_plus.yaml")  # depth=3
+agent = make_agent("alphabeta")  # 使用 YAML 默认深度
+agent = make_agent("alphabeta", alphabeta_depth=3)  # 覆盖为 depth=3
 agent = make_agent("supervised", supervised_checkpoint_path="checkpoint.pt", device="cpu")
 
 action_id = agent.select_action(observation, legal_actions, env)
@@ -96,9 +96,7 @@ action_id = agent.select_action(observation, legal_actions, env)
 | Agent | 名称 | 说明 |
 |---|---|---|
 | `RandomAgent` | `random` | 随机选择合法动作 |
-| `MaterialAgent` | `material` | 一步试走，材料评估 |
-| `AlphaBetaAgent` | `alphabeta` | Alpha-Beta 搜索（深度通过 config 调整） |
-| `AlphaBetaAgent` | `alphabeta_plus` | Alpha-Beta depth=3（最强手工基线） |
+| `AlphaBetaAgent` | `alphabeta` | Alpha-Beta 搜索（深度通过 `alphabeta_depth` 参数或 YAML 配置） |
 | `SupervisedAgent` | `supervised` | 加载 `CandidateMoveNet` checkpoint，greedy 选择 |
 | `MCTSAgent` | `mcts` | MCTS + PUCT + 网络引导搜索 |
 
@@ -112,7 +110,7 @@ dataset = DraughtsJsonlDataset(["data/file1.jsonl", "data/file2.jsonl"])
 loader = DataLoader(dataset, batch_size=32, collate_fn=collate_batch)
 ```
 
-`DraughtsJsonlDataset` 默认开启内存缓存（`cache_in_memory=True`）：构造时扫描 JSONL 并解析全量样本存入内存，`__getitem__` 直接从缓存返回，消除训练期间的磁盘 I/O 和 JSON 解析开销。对于超大数据集可设 `cache_in_memory=False` 退化为按需读盘模式。
+`DraughtsJsonlDataset` 默认开启内存缓存（`cache_in_memory=True`），适用于小数据集（< 500 MB）。大数据集务必通过 `--no-cache` 关闭缓存（`cache_in_memory=False`），数据按需从磁盘逐行读取，内存占用几乎可忽略，训练速度几乎不受影响。
 
 `collate_batch` 在 DataLoader worker 进程内直接将 Python 数据转为 `torch.Tensor`，利用 PyTorch 的共享内存机制传递 batch，避免 pickle 序列化瓶颈。
 
@@ -128,9 +126,7 @@ loader = DataLoader(dataset, batch_size=32, collate_fn=collate_batch)
 |---|---|---|
 | `model.yaml` | `model.py` | 网络结构参数 |
 | `alphabeta.yaml` | `agents.py` | AlphaBeta 搜索深度与评估权重 |
-| `alphabeta_plus.yaml` | `agents.py` | 更深搜索配置（depth=3） |
-| `material.yaml` | `agents.py` | 材料评估参数 |
-| `mcts.yaml` | `mcts.py` | MCTS 搜索超参数（sims, c_puct, batch_size, virtual_loss, dirichlet） |
+| `mcts.yaml` | `mcts.py` | MCTS 搜索超参数（sims, c_puct, dirichlet 等） |
 
 ## 测试
 

@@ -56,7 +56,7 @@ gui/simple_gui.py
     │
     ├── interface/DraughtsEnv              (C 引擎封装)
     ├── draughts.env.StandardDraughtsEnv   (MCTS 搜索用)
-    ├── draughts.agents.*                  (MCTSAgent, SupervisedAgent, AlphaBetaAgent, MaterialAgent)
+    ├── draughts.agents.*                  (MCTSAgent, SupervisedAgent, AlphaBetaAgent)
     ├── draughts.env.encode_observation    (局面编码)
     └── draughts.move_encoding             (坐标转换)
 ```

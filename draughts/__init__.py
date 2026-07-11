@@ -1,7 +1,6 @@
 from .agents import (
     AlphaBetaAgent,
     MCTSAgent,
-    MaterialAgent,
     RandomAgent,
     SupervisedAgent,
     available_agents,
@@ -19,7 +18,6 @@ __all__ = [
     "MCTSAgent",
     "MCTSConfig",
     "MCTSResult",
-    "MaterialAgent",
     "ModelConfig",
     "RandomAgent",
     "StandardDraughtsEnv",

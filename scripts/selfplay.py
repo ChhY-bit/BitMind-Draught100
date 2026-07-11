@@ -26,13 +26,13 @@ class SelfPlayConfig:
     black: str = "alphabeta"
     white: str = "alphabeta"
     games: int = 10
-    max_plies: int = 400
+    max_plies: int = 300
     output: str = "data/selfplay.jsonl"
     log_interval: int = 1
     seed: int = 1
     opening_random_plies: int = 6
-    material_config: Optional[str] = None
     alphabeta_config: Optional[str] = None
+    alphabeta_depth: Optional[int] = None
     black_checkpoint: Optional[str] = None
     white_checkpoint: Optional[str] = None
     mcts_config: Optional[str] = None
@@ -79,8 +79,8 @@ def generate_dataset(
     output_path: str,
     log_interval: int,
     seed: Optional[int],
-    material_config_path: Optional[str] = None,
     alphabeta_config_path: Optional[str] = None,
+    alphabeta_depth: Optional[int] = None,
     black_checkpoint_path: Optional[str] = None,
     white_checkpoint_path: Optional[str] = None,
     mcts_config_path: Optional[str] = None,
@@ -101,8 +101,8 @@ def generate_dataset(
     black_agent = make_agent(
         black_name,
         seed=seed,
-        material_config_path=material_config_path,
         alphabeta_config_path=alphabeta_config_path,
+        alphabeta_depth=alphabeta_depth,
         supervised_checkpoint_path=black_checkpoint_path,
         mcts_config_path=mcts_config_path,
         device=device,
@@ -111,8 +111,8 @@ def generate_dataset(
     white_agent = make_agent(
         white_name,
         seed=white_seed,
-        material_config_path=material_config_path,
         alphabeta_config_path=alphabeta_config_path,
+        alphabeta_depth=alphabeta_depth,
         supervised_checkpoint_path=white_checkpoint_path,
         mcts_config_path=mcts_config_path,
         device=device,
@@ -133,7 +133,6 @@ def generate_dataset(
         f"selfplay: black={black_agent.name} white={white_agent.name} "
         f"games={games} max_plies={max_plies} seed={seed} output={output} "
         f"mode={'append' if append else 'write'} start_game_id={start_game_id} "
-        f"material_config={material_config_path or 'default'} "
         f"alphabeta_config={alphabeta_config_path or 'default'} "
         f"black_checkpoint={black_checkpoint_path or 'none'} "
         f"white_checkpoint={white_checkpoint_path or 'none'} "
@@ -388,14 +387,15 @@ def parse_args() -> argparse.Namespace:
         "Essential for deterministic agents like AlphaBeta to produce varied games.",
     )
     parser.add_argument(
-        "--material-config",
-        default=None,
-        help="YAML file for MaterialAgent parameters.",
-    )
-    parser.add_argument(
         "--alphabeta-config",
         default=None,
         help="YAML file for AlphaBetaAgent parameters.",
+    )
+    parser.add_argument(
+        "--alphabeta-depth",
+        type=int,
+        default=None,
+        help="Override AlphaBeta search depth (overrides YAML config).",
     )
     parser.add_argument(
         "--black-checkpoint",
@@ -463,8 +463,8 @@ def merge_selfplay_args(cli_args: argparse.Namespace) -> argparse.Namespace:
         "log_interval": cli_args.log_interval,
         "seed": cli_args.seed,
         "opening_random_plies": cli_args.opening_random_plies,
-        "material_config": cli_args.material_config,
         "alphabeta_config": cli_args.alphabeta_config,
+        "alphabeta_depth": cli_args.alphabeta_depth,
         "black_checkpoint": cli_args.black_checkpoint,
         "white_checkpoint": cli_args.white_checkpoint,
         "device": cli_args.device,
@@ -559,8 +559,8 @@ def main() -> None:
         output_path=args.output,
         log_interval=args.log_interval,
         seed=args.seed,
-        material_config_path=args.material_config,
         alphabeta_config_path=args.alphabeta_config,
+        alphabeta_depth=args.alphabeta_depth,
         black_checkpoint_path=args.black_checkpoint,
         white_checkpoint_path=args.white_checkpoint,
         mcts_config_path=args.mcts_config,

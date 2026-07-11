@@ -1,9 +1,0 @@
-search_depth: 3
-man_value: 100
-king_value: 250
-win_value: 1000000
-draw_value: 0
-advancement_value: 4
-center_value: 3
-edge_penalty: 2
-back_row_guard_value: 5

@@ -1,11 +1,11 @@
 # 批量评测参数。
 # 命令行显式参数会覆盖本文件。
 
-# 黑方 agent：random、material、alphabeta、alphabeta_plus、supervised。
+# 黑方 agent：random、alphabeta、supervised、mcts。
 black: random
 
 # 白方 agent。
-white: material
+white: alphabeta
 
 # 评测局数。
 games: 100
@@ -20,13 +20,13 @@ log_interval: 5
 seed: 1
 
 # 正式评测 agent 接管前，先由引擎从标准初始局面随机走多少个合法半回合。
-opening_random_plies: 0
-
-# MaterialAgent 配置；none 表示默认配置。
-material_config: none
+opening_random_plies: 8
 
 # AlphaBetaAgent 配置；none 表示默认配置。
 alphabeta_config: none
+
+# AlphaBeta 搜索深度覆盖；none 表示使用 YAML 配置文件中的 search_depth。
+alphabeta_depth: none
 
 # 黑方 supervised checkpoint。
 black_checkpoint: none

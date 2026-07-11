@@ -18,9 +18,7 @@ from .mcts import (
 from .model import CandidateMoveNet, ModelConfig
 from .move_encoding import encode_legal_moves, move_to_dict, square_to_coord
 
-DEFAULT_MATERIAL_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "material.yaml"
 DEFAULT_ALPHABETA_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "alphabeta.yaml"
-DEFAULT_ALPHABETA_PLUS_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "alphabeta_plus.yaml"
 
 BLACK_WIN = 1
 WHITE_WIN = 2
@@ -62,14 +60,6 @@ class RandomAgent(Agent):
 
 
 @dataclass
-class MaterialConfig:
-    man_value: int = 100
-    king_value: int = 250
-    win_value: int = 1_000_000
-    draw_value: int = 0
-
-
-@dataclass
 class AlphaBetaConfig:
     search_depth: int = 2
     man_value: int = 100
@@ -81,59 +71,19 @@ class AlphaBetaConfig:
     edge_penalty: int = 2
     back_row_guard_value: int = 5
 
-    def material_config(self) -> MaterialConfig:
-        return MaterialConfig(
-            man_value=self.man_value,
-            king_value=self.king_value,
-            win_value=self.win_value,
-            draw_value=self.draw_value,
-        )
-
-
-@dataclass
-class MaterialAgent(Agent):
-    seed: Optional[int] = None
-    config_path: Optional[str] = None
-    name: str = "material"
-
-    def __post_init__(self) -> None:
-        self._rng = random.Random(self.seed)
-        self.config = load_material_config(self.config_path)
-
-    def select_action(
-        self,
-        observation: Dict[str, object],
-        legal_actions: Sequence[Move],
-        env=None,
-    ) -> int:
-        if not legal_actions:
-            raise ValueError("MaterialAgent received no legal actions")
-        if env is None:
-            raise ValueError("MaterialAgent requires an environment with clone()")
-
-        side_to_move = int(observation["side_to_move"])
-        scored_moves = []
-        for move in legal_actions:
-            cloned = env.clone()
-            cloned.step(move.action_id)
-            score = evaluate_after_move(cloned.raw_observation(), side_to_move, self.config)
-            scored_moves.append((score, move))
-
-        best_score = max(score for score, _move in scored_moves)
-        candidates = [move for score, move in scored_moves if score == best_score]
-        return self._rng.choice(candidates).action_id
-
 
 @dataclass
 class AlphaBetaAgent(Agent):
     seed: Optional[int] = None
     config_path: Optional[str] = None
+    depth: Optional[int] = None
     name: str = "alphabeta"
 
     def __post_init__(self) -> None:
         self._rng = random.Random(self.seed)
         self.config = load_alphabeta_config(self.config_path)
-        self.material_config = self.config.material_config()
+        if self.depth is not None:
+            self.config.search_depth = self.depth
 
     def select_action(
         self,
@@ -327,51 +277,6 @@ def promotion_score(move: Move, observation: Dict[str, object]) -> int:
     return 0
 
 
-def evaluate_after_move(
-    observation: Dict[str, object],
-    actor_side: int,
-    config: Optional[MaterialConfig] = None,
-) -> int:
-    return evaluate_position(observation, actor_side, config)
-
-
-def evaluate_position(
-    observation: Dict[str, object],
-    side: int,
-    config: Optional[MaterialConfig] = None,
-) -> int:
-    material_config = config or MaterialConfig()
-    result = int(observation["game_result"])
-    if result == BLACK_WIN:
-        return material_config.win_value if side == 0 else -material_config.win_value
-    if result == WHITE_WIN:
-        return material_config.win_value if side == 1 else -material_config.win_value
-    if result == DRAW:
-        return material_config.draw_value
-    return material_score_for_side(observation, side, material_config)
-
-
-def material_score_for_side(
-    observation: Dict[str, object],
-    side: int,
-    config: Optional[MaterialConfig] = None,
-) -> int:
-    material_config = config or MaterialConfig()
-    black_score = 0
-    white_score = 0
-    for piece in observation["squares"]:
-        if piece == 1:
-            black_score += material_config.man_value
-        elif piece == 2:
-            black_score += material_config.king_value
-        elif piece == 3:
-            white_score += material_config.man_value
-        elif piece == 4:
-            white_score += material_config.king_value
-
-    return black_score - white_score if side == 0 else white_score - black_score
-
-
 def evaluate_enhanced_position(
     observation: Dict[str, object],
     side: int,
@@ -429,22 +334,6 @@ def is_center_square(row: int, col: int) -> bool:
 
 def is_edge_square(col: int) -> bool:
     return col == 0 or col == 9
-
-
-def load_material_config(config_path: Optional[str] = None) -> MaterialConfig:
-    path = Path(config_path) if config_path is not None else DEFAULT_MATERIAL_CONFIG_PATH
-    default_config = MaterialConfig()
-    values = load_integer_yaml(
-        path,
-        {
-            "man_value": default_config.man_value,
-            "king_value": default_config.king_value,
-            "win_value": default_config.win_value,
-            "draw_value": default_config.draw_value,
-        },
-        "material",
-    )
-    return MaterialConfig(**values)
 
 
 def load_alphabeta_config(config_path: Optional[str] = None) -> AlphaBetaConfig:
@@ -509,8 +398,8 @@ def order_moves(legal_actions: Sequence[Move], observation: Dict[str, object]) -
 def make_agent(
     name: str,
     seed: Optional[int] = None,
-    material_config_path: Optional[str] = None,
     alphabeta_config_path: Optional[str] = None,
+    alphabeta_depth: Optional[int] = None,
     supervised_checkpoint_path: Optional[str] = None,
     mcts_config_path: Optional[str] = None,
     device: Optional[str] = None,
@@ -518,12 +407,8 @@ def make_agent(
     normalized = name.strip().lower()
     if normalized == "random":
         return RandomAgent(seed=seed)
-    if normalized in {"material", "material-agent"}:
-        return MaterialAgent(seed=seed, config_path=material_config_path)
     if normalized in {"alphabeta", "alpha-beta", "ab"}:
-        return AlphaBetaAgent(seed=seed, config_path=alphabeta_config_path)
-    if normalized in {"alphabeta_plus", "alphabeta-plus", "abplus", "ab+"}:
-        return AlphaBetaAgent(seed=seed, config_path=alphabeta_config_path or str(DEFAULT_ALPHABETA_PLUS_CONFIG_PATH))
+        return AlphaBetaAgent(seed=seed, config_path=alphabeta_config_path, depth=alphabeta_depth)
     if normalized in {"supervised", "supervised-agent", "sl"}:
         if supervised_checkpoint_path is None:
             raise ValueError("supervised agent requires a checkpoint path")
@@ -542,9 +427,7 @@ def make_agent(
 def available_agents() -> List[str]:
     return [
         "random",
-        "material",
         "alphabeta",
-        "alphabeta_plus",
         "supervised",
         "mcts",
     ]

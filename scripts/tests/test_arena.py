@@ -70,13 +70,13 @@ class ArenaTests(unittest.TestCase):
     def test_run_arena_smoke(self):
         stats = run_arena(
             black_name="random",
-            white_name="material",
+            white_name="alphabeta",
             games=2,
             max_plies=50,
             log_interval=2,
             seed=1,
-            material_config_path=None,
             alphabeta_config_path=None,
+            alphabeta_depth=1,
         )
 
         self.assertEqual(stats.games, 2)
@@ -104,9 +104,9 @@ class ArenaTests(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir) / "arena.yaml"
             path.write_text(
-                "black: random\nwhite: material\ngames: 3\nmax_plies: 40\n"
+                "black: random\nwhite: alphabeta\ngames: 3\nmax_plies: 40\n"
                 "log_interval: 1\nseed: 9\nopening_random_plies: 6\n"
-                "material_config: none\nalphabeta_config: none\n"
+                "alphabeta_config: none\n"
                 "black_checkpoint: none\nwhite_checkpoint: none\ndevice: none\n",
                 encoding="utf-8",
             )

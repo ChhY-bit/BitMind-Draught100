@@ -172,9 +172,11 @@ class DraughtsJsonlDataset:
 
     By default samples are pre-loaded into memory during construction
     (``cache_in_memory=True``) so that ``__getitem__`` incurs no disk
-    I/O or JSON parsing.  Set ``cache_in_memory=False`` for huge
-    datasets that do not fit in RAM; in that mode each ``__getitem__``
-    reads its line from disk on demand.
+    I/O or JSON parsing.  For large datasets (typical of MCTS self-play),
+    always use ``cache_in_memory=False`` (via ``--no-cache`` in the trainer)
+    to avoid exhausting system RAM.  The I/O overhead is negligible compared
+    to GPU training time.  In that mode each ``__getitem__`` reads its line
+    from disk on demand.
 
     Validation is opt-in via ``validate=True`` (or the ``.validate()``
     method) — useful for first-time data inspection but skipped by

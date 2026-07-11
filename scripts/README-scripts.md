@@ -18,8 +18,8 @@ PYTHONPATH=interface:. python3 scripts/<script>.py [args]
 PYTHONPATH=interface:. python3 scripts/selfplay.py
 PYTHONPATH=interface:. python3 scripts/selfplay.py \
   --black alphabeta --white alphabeta \
-  --alphabeta-config draughts/config/alphabeta_plus.yaml \
-  --games 50 --max-plies 500 --output data/abplus.jsonl --seed 4040
+  --alphabeta-depth 3 \
+  --games 50 --max-plies 300 --output data/ab_plus.jsonl --seed 4040
 ```
 
 ### 参数
@@ -27,15 +27,15 @@ PYTHONPATH=interface:. python3 scripts/selfplay.py \
 | 参数 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `--config` | path | `scripts/config/selfplay.yaml` | 配置文件，CLI 参数覆盖文件中的值 |
-| `--black` | str | `alphabeta` | 黑方 agent：`random`/`material`/`alphabeta`/`alphabeta_plus`/`supervised`/`mcts` |
+| `--black` | str | `alphabeta` | 黑方 agent：`random`/`alphabeta`/`supervised`/`mcts` |
 | `--white` | str | `alphabeta` | 白方 agent，同上 |
 | `--games` | int | 100 | 生成局数 |
-| `--max-plies` | int | 500 | 每局最大半回合数 |
+| `--max-plies` | int | 300 | 每局最大半回合数 |
 | `--output` | path | `data/selfplay.jsonl` | 输出 JSONL 文件路径 |
 | `--log-interval` | int | 1 | 每隔多少局打印一次进度 |
 | `--seed` | int | 1 | 随机种子 |
-| `--material-config` | path | none | MaterialAgent 的 YAML 配置 |
 | `--alphabeta-config` | path | none | AlphaBetaAgent 的 YAML 配置 |
+| `--alphabeta-depth` | int | none | 覆盖 AlphaBeta 搜索深度（优先于 YAML 配置中的 `search_depth`） |
 | `--black-checkpoint` | path | none | 黑方 supervised checkpoint |
 | `--white-checkpoint` | path | none | 白方 supervised checkpoint |
 | `--device` | str | auto | 推理设备：`cpu`、`cuda`（= `cuda:0`）、`cuda:1` |
@@ -44,8 +44,6 @@ PYTHONPATH=interface:. python3 scripts/selfplay.py \
 | `--auto-output-name` | flag | on | output 已存在时自动生成 `_001`/`_002` 新文件名 |
 
 MCTS 自博弈会自动将 search visit count 分布作为 `policy_target_probs` 写入 JSONL，无需再跑 `search_improve`。
-
-MCTS 批量推理参数（`batch_size`, `virtual_loss_value`）通过 `--mcts-config` 指定的 YAML 文件配置，默认读取 `draughts/config/mcts.yaml`。GPU 场景建议 `batch_size: 64–256`，CPU 场景建议 `batch_size: 1–8`。
 
 ### 探索多样性：两种机制的分工
 
@@ -60,7 +58,7 @@ MCTS 自博弈时，为了让生成的对局数据足够多样化（而非每局
 
 **temperature**（决策层）：800 次模拟全部完成后，从 visit count 分布中选择最终走法时介入。temperature=0（默认）直接选 visits 最多的走法；temperature>0 时按 `softmax(visits/temperature)` 采样，偶尔也会选次优走法，增加对局变化。
 
-**两者的配合**：Dirichlet 让 MCTS "想得更广"（搜索阶段），temperature 让对局"走得更花"（决策阶段）。当前项目的开局多样性主要靠 `--opening-random-plies`（前 N 步随机走），详见 `draughts/config/mcts.yaml` 中各参数的详细注释。
+**两者的配合**：Dirichlet 让 MCTS "想得更广"（搜索阶段），temperature 让对局"走得更花"（决策阶段）。当前项目的开局多样性主要靠 `--opening-random-plies`（前 N 步随机走），详见 [draughts/config/mcts.yaml](../draughts/config/mcts.yaml) 中各参数的详细注释。
 
 ---
 
@@ -82,7 +80,7 @@ PYTHONPATH=interface:. python3 scripts/search_improve.py \
 |---|---|---|---|
 | `inputs` | path(s) | (必填) | 输入 JSONL 文件或目录，可多个 |
 | `--output` | path | (必填) | 输出 JSONL 文件路径 |
-| `--alphabeta-depth` | int | 2 | Teacher AlphaBeta 搜索深度 |
+| `--alphabeta-depth` | int | YAML 默认值 | Teacher AlphaBeta 搜索深度（覆盖 YAML 配置） |
 | `--min-score-margin` | int | 0 | 只保留 best move 与次优 move 分差 ≥ 此值的局面 |
 | `--max-samples` | int | 全部 | 最多输出样本数 |
 | `--position-sample-rate` | float | 1.0 | 从输入中随机抽样的比例（0–1） |
@@ -109,60 +107,18 @@ PYTHONPATH=interface:. python3 scripts/arena.py \
 |---|---|---|---|
 | `--config` | path | `scripts/config/arena.yaml` | 配置文件 |
 | `--black` | str | `random` | 黑方 agent |
-| `--white` | str | `material` | 白方 agent |
+| `--white` | str | `alphabeta` | 白方 agent |
 | `--games` | int | 100 | 评测局数 |
 | `--max-plies` | int | 300 | 每局最大半回合数 |
 | `--log-interval` | int | 20 | 每隔多少局打印一次进度 |
 | `--seed` | int | 1 | 随机种子 |
 | `--opening-random-plies` | int | 0 | 正式评测前随机走多少半回合（打破固定开局） |
-| `--material-config` | path | none | MaterialAgent YAML 配置 |
 | `--alphabeta-config` | path | none | AlphaBetaAgent YAML 配置 |
+| `--alphabeta-depth` | int | none | 覆盖 AlphaBeta 搜索深度（优先于 YAML 配置中的 `search_depth`） |
 | `--black-checkpoint` | path | none | 黑方 supervised checkpoint |
 | `--white-checkpoint` | path | none | 白方 supervised checkpoint |
 | `--device` | str | auto | 推理设备：`cpu`、`cuda`（= `cuda:0`）、`cuda:1` |
-| `--mcts-config` | path | none | MCTSAgent YAML 配置（含 batch_size） |
-
----
-
-## `compare_checkpoints.py` — 自动晋升评测
-
-candidate vs baseline 多 seed/opening 换边评测，输出晋升/拒绝建议。
-
-```bash
-PYTHONPATH=interface:. python3 scripts/compare_checkpoints.py \
-  --candidate trainer/checkpoints/new.pt \
-  --baseline trainer/checkpoints/best.pt \
-  --preset quick --report reports/compare.json --device cpu
-```
-
-### 参数
-
-| 参数 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `--candidate` | path | (必填) | 候选 checkpoint 路径 |
-| `--baseline` | path | (必填) | 基线 checkpoint 路径 |
-| `--preset` | str | `quick` | 评测预设：`quick`、`standard`、`full`、`alphabeta` |
-| `--games` | int | 50/100 | 每 bucket 局数（由 preset 决定） |
-| `--max-plies` | int | 300 | 每局最大半回合数 |
-| `--seeds` | str | `2028` | 逗号分隔的种子列表 |
-| `--opening-random-plies` | str | `4` | 逗号分隔的开局深度列表 |
-| `--external-agents` | str | 无 | 逗号分隔的外部基线：`random`、`material`、`alphabeta` |
-| `--promote-threshold` | float | 0.53 | 建议 promote 的最低 decisive 胜率 |
-| `--reject-threshold` | float | 0.50 | 高于此值不 reject |
-| `--bucket-floor` | float | 0.45 | 单个 bucket 胜率低于此值则 inconclusive |
-| `--report` | path | none | 输出 JSON 报告路径 |
-| `--material-config` | path | none | MaterialAgent YAML 配置 |
-| `--alphabeta-config` | path | none | AlphaBetaAgent YAML 配置 |
-| `--device` | str | auto | 推理设备：`cpu`、`cuda`（= `cuda:0`）、`cuda:1` |
-
-### Preset 详情
-
-| Preset | 局数 | 种子 | 开局 | 外部参考 |
-|---|---|---|---|---|
-| `quick` | 50 | 2028 | 4 | 无 |
-| `standard` | 100 | 2028,2029 | 2,8 | material |
-| `full` | 100 | 2028,2029 | 2,8 | material, alphabeta |
-| `alphabeta` | 50 | 2028 | 8 | alphabeta |
+| `--mcts-config` | path | none | MCTSAgent YAML 配置 |
 
 ---
 

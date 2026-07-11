@@ -245,7 +245,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-cache",
         action="store_true",
-        help="Do not preload JSONL into memory. Saves RAM at the cost of slower per-epoch I/O.",
+        default=False,
+        help="Do not preload entire JSONL into memory. Strongly recommended for large datasets to avoid OOM.",
     )
     args = parser.parse_args()
     if not args.data and not args.source_config and not args.source:

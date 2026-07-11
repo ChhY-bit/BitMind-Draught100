@@ -27,8 +27,8 @@ class ArenaConfig:
     log_interval: int = 20
     seed: int = 1
     opening_random_plies: int = 0
-    material_config: Optional[str] = None
     alphabeta_config: Optional[str] = None
+    alphabeta_depth: Optional[int] = None
     black_checkpoint: Optional[str] = None
     white_checkpoint: Optional[str] = None
     mcts_config: Optional[str] = None
@@ -134,8 +134,8 @@ def run_arena(
     max_plies: int,
     log_interval: int,
     seed: Optional[int],
-    material_config_path: Optional[str] = None,
     alphabeta_config_path: Optional[str] = None,
+    alphabeta_depth: Optional[int] = None,
     black_checkpoint_path: Optional[str] = None,
     white_checkpoint_path: Optional[str] = None,
     mcts_config_path: Optional[str] = None,
@@ -154,8 +154,8 @@ def run_arena(
     black_agent = make_agent(
         black_name,
         seed=seed,
-        material_config_path=material_config_path,
         alphabeta_config_path=alphabeta_config_path,
+        alphabeta_depth=alphabeta_depth,
         supervised_checkpoint_path=black_checkpoint_path,
         mcts_config_path=mcts_config_path,
         device=device,
@@ -164,8 +164,8 @@ def run_arena(
     white_agent = make_agent(
         white_name,
         seed=white_seed,
-        material_config_path=material_config_path,
         alphabeta_config_path=alphabeta_config_path,
+        alphabeta_depth=alphabeta_depth,
         supervised_checkpoint_path=white_checkpoint_path,
         mcts_config_path=mcts_config_path,
         device=device,
@@ -178,7 +178,6 @@ def run_arena(
         f"arena: black={black_agent.name} white={white_agent.name} "
         f"games={games} max_plies={max_plies} seed={seed} "
         f"opening_random_plies={opening_random_plies} "
-        f"material_config={material_config_path or 'default'} "
         f"alphabeta_config={alphabeta_config_path or 'default'} "
         f"black_checkpoint={black_checkpoint_path or 'none'} "
         f"white_checkpoint={white_checkpoint_path or 'none'}"
@@ -222,14 +221,15 @@ def parse_args() -> argparse.Namespace:
         help="Random legal half-moves to play before evaluated agents start.",
     )
     parser.add_argument(
-        "--material-config",
-        default=None,
-        help="YAML file for MaterialAgent parameters.",
-    )
-    parser.add_argument(
         "--alphabeta-config",
         default=None,
         help="YAML file for AlphaBetaAgent parameters.",
+    )
+    parser.add_argument(
+        "--alphabeta-depth",
+        type=int,
+        default=None,
+        help="Override AlphaBeta search depth (overrides YAML config).",
     )
     parser.add_argument(
         "--black-checkpoint",
@@ -283,8 +283,8 @@ def merge_arena_args(cli_args: argparse.Namespace) -> argparse.Namespace:
         "log_interval",
         "seed",
         "opening_random_plies",
-        "material_config",
         "alphabeta_config",
+        "alphabeta_depth",
         "black_checkpoint",
         "white_checkpoint",
         "device",
@@ -330,8 +330,8 @@ def main() -> None:
         max_plies=args.max_plies,
         log_interval=args.log_interval,
         seed=args.seed,
-        material_config_path=args.material_config,
         alphabeta_config_path=args.alphabeta_config,
+        alphabeta_depth=args.alphabeta_depth,
         black_checkpoint_path=args.black_checkpoint,
         white_checkpoint_path=args.white_checkpoint,
         mcts_config_path=args.mcts_config,
