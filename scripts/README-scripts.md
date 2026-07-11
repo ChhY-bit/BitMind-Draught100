@@ -47,6 +47,21 @@ MCTS 自博弈会自动将 search visit count 分布作为 `policy_target_probs`
 
 MCTS 批量推理参数（`batch_size`, `virtual_loss_value`）通过 `--mcts-config` 指定的 YAML 文件配置，默认读取 `draughts/config/mcts.yaml`。GPU 场景建议 `batch_size: 64–256`，CPU 场景建议 `batch_size: 1–8`。
 
+### 探索多样性：两种机制的分工
+
+MCTS 自博弈时，为了让生成的对局数据足够多样化（而非每局走相同的棋），项目提供了两种不同层面的随机性机制，它们作用的位置截然不同：
+
+| 机制 | 作用层面 | 配置参数 | 影响范围 |
+|------|---------|---------|---------|
+| Dirichlet 噪声 | **思考层**（MCTS 内部） | `dirichlet_alpha`、`dirichlet_epsilon` | 干预根节点 prior，影响"怎么搜" |
+| temperature | **决策层**（MCTS 外部） | `temperature` | 干预最终走法选择，影响"怎么选" |
+
+**Dirichlet 噪声**（思考层）：在 MCTS 搜索开始前，将根节点的网络先验概率与 Dirichlet 分布混合（`P_root = (1-ε)×P_net + ε×Dirichlet(α)`）。α<1 时噪声随机"偏爱"少数走法，模拟"棋手偶然的灵光一现"，迫使 MCTS 不要只盯着网络最推荐的那几步棋。注意：当前代码中 `MCTSAgent.select_action()` 硬编码 `add_noise=False`，此机制暂未启用。
+
+**temperature**（决策层）：800 次模拟全部完成后，从 visit count 分布中选择最终走法时介入。temperature=0（默认）直接选 visits 最多的走法；temperature>0 时按 `softmax(visits/temperature)` 采样，偶尔也会选次优走法，增加对局变化。
+
+**两者的配合**：Dirichlet 让 MCTS "想得更广"（搜索阶段），temperature 让对局"走得更花"（决策阶段）。当前项目的开局多样性主要靠 `--opening-random-plies`（前 N 步随机走），详见 `draughts/config/mcts.yaml` 中各参数的详细注释。
+
 ---
 
 ## `search_improve.py` — 搜索改进数据生成

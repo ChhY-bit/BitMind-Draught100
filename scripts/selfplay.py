@@ -327,7 +327,7 @@ def build_sample(
         sample["policy_target_probs"] = [float(p) for p in policy_target_probs]
     return sample
 
-
+# 对局结束后，为所有记录补充对局结果信息
 def finalize_samples(
     samples: Sequence[Dict[str, object]],
     final_result: int,
@@ -343,7 +343,7 @@ def finalize_samples(
         finalized.append(item)
     return finalized
 
-
+# 价值头的输出标签
 def value_target_for_side(final_result: int, side: int, maxed: bool = False) -> int:
     if maxed or final_result == DRAW:
         return 0

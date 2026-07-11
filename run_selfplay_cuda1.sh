@@ -6,8 +6,15 @@ set -e
 
 cleanup() {
     echo ""
-    echo "Caught signal — killing all workers..."
-    jobs -p | xargs -r kill 2>/dev/null
+    echo "Caught signal — stopping all workers..."
+    jobs -p | xargs -r kill -INT 2>/dev/null
+    for _i in $(seq 1 5); do
+        if ! jobs -p | grep -q . 2>/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+    jobs -p | xargs -r kill -9 2>/dev/null
     wait 2>/dev/null
     echo "All workers stopped."
 }

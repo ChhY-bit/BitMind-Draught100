@@ -70,6 +70,7 @@ class MCTSNode:
     total_value: float = 0.0
     children: dict[int, MCTSNode] = field(default_factory=dict)
 
+    # Q(s,a)项的定义
     def q(self) -> float:
         """Average value of this edge (from the parent player's perspective)."""
         if self.visit_count == 0:
@@ -169,6 +170,7 @@ def mcts_search(
         root.children[move.action_id] = MCTSNode(prior=float(priors[i]))
 
     # --- run simulations (sequential, one leaf expansion per sim) ---
+    # MCTS 核心循环
     for _ in range(config.num_simulations):
         sim_env = env.clone()
         _simulate(root, sim_env, model, config, device)
@@ -226,6 +228,7 @@ def _simulate(
         node = node.children[action_id]
 
     # ---- evaluation ----
+    # 获取局面估值（Value Head）
     if env.is_terminal():
         leaf_value = _terminal_value(env)
     else:
@@ -259,6 +262,7 @@ def _simulate(
 # ---------------------------------------------------------------------------
 
 
+# PUCT 公式
 def _select_child(node: MCTSNode, c_puct: float) -> int:
     """Choose the child with the highest PUCT score."""
     total_visits = sum(c.visit_count for c in node.children.values())

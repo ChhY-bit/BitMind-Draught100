@@ -1,7 +1,7 @@
 # AlphaBetaAgent 搜索与增强评估参数。
 
 # 搜索深度，单位是半回合；数值越大越强但越慢。
-search_depth: 2
+search_depth: 6
 
 # 普通子的基础价值。
 man_value: 100

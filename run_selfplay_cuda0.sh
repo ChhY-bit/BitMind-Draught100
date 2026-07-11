@@ -10,8 +10,18 @@ set -e
 
 cleanup() {
     echo ""
-    echo "Caught signal — killing all workers..."
-    jobs -p | xargs -r kill 2>/dev/null
+    echo "Caught signal — stopping all workers..."
+    # 先尝试温和终止（给 C 引擎调用的间隙捕获信号）
+    jobs -p | xargs -r kill -INT 2>/dev/null
+    # 等待至多 5 秒让进程自行退出
+    for _i in $(seq 1 5); do
+        if ! jobs -p | grep -q . 2>/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+    # 还在跑的强制终止
+    jobs -p | xargs -r kill -9 2>/dev/null
     wait 2>/dev/null
     echo "All workers stopped."
 }

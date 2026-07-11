@@ -13,7 +13,7 @@
 #   200 → 快速评测
 #   400 → 均衡
 #   800 → 充分搜索
-num_simulations: 800
+num_simulations: 1200
 
 # c_puct — 探索系数，控制在 PUCT 公式中 "先验概率" 相对于 "已访问价值"
 # 的影响力。
@@ -28,6 +28,14 @@ c_puct: 1.5
 
 # temperature — 从 visit count 分布中选择最终走法时的温度。
 #
+# 作用层面：对局层 / 决策层（MCTS 外部）—— 800 次模拟全部完成后才介入，
+# 仅影响"最终选哪步棋"，不干预 MCTS 内部的搜索过程。
+#
+# 与 Dirichlet 噪声的层级分工：
+#   - Dirichlet 噪声：思考层（MCTS 内部）—— 干预根节点 prior，影响搜索方向。
+#   - temperature：  决策层（MCTS 外部）—— 干预最终走法选择，影响对局多样性。
+#   两者都在制造多样性，但作用的维度不同。
+#
 #   0.0（默认）→ 确定性选择，总是选访问次数最多的走法（评测用）。
 #   1.0        → 按 visit count 分布比例采样（自博弈用，增加对局多样性）。
 #   > 1.0      → 更平均，走法选择更随机。
@@ -38,12 +46,19 @@ temperature: 0.0
 
 # dirichlet_alpha — Dirichlet 噪声的浓度参数（仅自博弈生效，由 add_noise 控制）。
 #
+# 作用层面：思考层（MCTS 内部）—— 在搜索开始前，干预根节点的网络先验概率，
+# 让 MCTS 不要过早"锁定"少数高分走法，给其他分支也留一些被探索的机会。
+# 与 temperature 的区别：Dirichlet 影响"怎么搜"，temperature 影响"怎么选"。
+#
 # 在根节点的网络先验概率上叠加 Dirichlet 噪声，防止 MCTS 过早"锁定"少数
 # 高分走法，遗漏其他有潜力的分支。这对 Phase 3 自博弈的数据多样性至关重要。
 #
 # α 越小 → 噪声越"尖"（集中在少数走法上）。
 # α 越大 → 噪声越"平"（均匀撒在所有走法上）。
 # 棋盘分支因子越大，α 通常越小。国际跳棋推荐 0.2 ~ 0.5。
+#
+# 注意：当前代码中 MCTSAgent.select_action() 硬编码 add_noise=False，
+# 此参数暂未生效。启用需将 agents.py 中 add_noise=False 改为 True。
 dirichlet_alpha: 0.3
 
 # dirichlet_epsilon — 噪声混合比例。

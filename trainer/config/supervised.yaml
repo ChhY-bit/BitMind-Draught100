@@ -1,10 +1,10 @@
 # 监督学习训练参数。
 
 # 训练轮数；1 个 epoch 表示完整遍历一次训练集。
-epochs: 3
+epochs: 5
 
 # 每个 batch 的样本数；数值越大通常越稳定，但占用更多内存。
-batch_size: 64
+batch_size: 256
 
 # Adam 优化器学习率；过大会震荡，过小会训练很慢。
 learning_rate: 0.001
@@ -17,13 +17,13 @@ value_loss_weight: 0.25
 validation_split: 0.1
 
 # 随机种子；影响训练/验证划分、shuffle 和初始参数。
-seed: 4
+seed: 1234
 
 # 是否打乱训练样本；1 表示打乱，0 表示不打乱。
 shuffle: 1
 
 # 每隔多少个 batch 打印一次训练日志。
-log_interval: 20
+log_interval: 100
 
 # 每隔多少个 epoch 向 CSV 写入一行训练记录。
 # 长时间训练时可以调大，例如 5 或 10，避免 CSV 过长；最后一个 epoch 一定会写入。
@@ -31,4 +31,4 @@ csv_log_interval_epochs: 1
 
 # DataLoader 子进程数；设为 0 则在主进程中加载（慢，仅调试用）。
 # GPU 训练推荐 4–8，CPU 训练设为 0。
-num_workers: 4
+num_workers: 8
