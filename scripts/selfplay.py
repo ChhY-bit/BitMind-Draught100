@@ -33,6 +33,8 @@ class SelfPlayConfig:
     opening_random_plies: int = 6
     alphabeta_config: Optional[str] = None
     alphabeta_depth: Optional[int] = None
+    alphabeta_depth_black: Optional[int] = None
+    alphabeta_depth_white: Optional[int] = None
     black_checkpoint: Optional[str] = None
     white_checkpoint: Optional[str] = None
     mcts_config: Optional[str] = None
@@ -81,6 +83,8 @@ def generate_dataset(
     seed: Optional[int],
     alphabeta_config_path: Optional[str] = None,
     alphabeta_depth: Optional[int] = None,
+    alphabeta_depth_black: Optional[int] = None,
+    alphabeta_depth_white: Optional[int] = None,
     black_checkpoint_path: Optional[str] = None,
     white_checkpoint_path: Optional[str] = None,
     mcts_config_path: Optional[str] = None,
@@ -98,11 +102,14 @@ def generate_dataset(
     if opening_random_plies < 0:
         raise ValueError("opening_random_plies must be non-negative")
 
+    black_depth = alphabeta_depth_black if alphabeta_depth_black is not None else alphabeta_depth
+    white_depth = alphabeta_depth_white if alphabeta_depth_white is not None else alphabeta_depth
+
     black_agent = make_agent(
         black_name,
         seed=seed,
         alphabeta_config_path=alphabeta_config_path,
-        alphabeta_depth=alphabeta_depth,
+        alphabeta_depth=black_depth,
         supervised_checkpoint_path=black_checkpoint_path,
         mcts_config_path=mcts_config_path,
         device=device,
@@ -112,7 +119,7 @@ def generate_dataset(
         white_name,
         seed=white_seed,
         alphabeta_config_path=alphabeta_config_path,
-        alphabeta_depth=alphabeta_depth,
+        alphabeta_depth=white_depth,
         supervised_checkpoint_path=white_checkpoint_path,
         mcts_config_path=mcts_config_path,
         device=device,
@@ -395,7 +402,19 @@ def parse_args() -> argparse.Namespace:
         "--alphabeta-depth",
         type=int,
         default=None,
-        help="Override AlphaBeta search depth (overrides YAML config).",
+        help="Override AlphaBeta search depth for both sides (overrides YAML config).",
+    )
+    parser.add_argument(
+        "--alphabeta-depth-black",
+        type=int,
+        default=None,
+        help="Override AlphaBeta search depth for black only (takes precedence over --alphabeta-depth).",
+    )
+    parser.add_argument(
+        "--alphabeta-depth-white",
+        type=int,
+        default=None,
+        help="Override AlphaBeta search depth for white only (takes precedence over --alphabeta-depth).",
     )
     parser.add_argument(
         "--black-checkpoint",
@@ -465,6 +484,8 @@ def merge_selfplay_args(cli_args: argparse.Namespace) -> argparse.Namespace:
         "opening_random_plies": cli_args.opening_random_plies,
         "alphabeta_config": cli_args.alphabeta_config,
         "alphabeta_depth": cli_args.alphabeta_depth,
+        "alphabeta_depth_black": cli_args.alphabeta_depth_black,
+        "alphabeta_depth_white": cli_args.alphabeta_depth_white,
         "black_checkpoint": cli_args.black_checkpoint,
         "white_checkpoint": cli_args.white_checkpoint,
         "device": cli_args.device,
@@ -561,6 +582,8 @@ def main() -> None:
         seed=args.seed,
         alphabeta_config_path=args.alphabeta_config,
         alphabeta_depth=args.alphabeta_depth,
+        alphabeta_depth_black=args.alphabeta_depth_black,
+        alphabeta_depth_white=args.alphabeta_depth_white,
         black_checkpoint_path=args.black_checkpoint,
         white_checkpoint_path=args.white_checkpoint,
         mcts_config_path=args.mcts_config,

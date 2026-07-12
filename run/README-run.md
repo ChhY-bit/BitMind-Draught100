@@ -8,7 +8,7 @@
 
 | 脚本 | 用途 | 计算资源 |
 |------|------|---------|
-| `selfplay_ab.sh` | AlphaBeta 自博弈 | CPU 多核 |
+| `selfplay_ab.sh` | AlphaBeta 自博弈（双深度非对称） | CPU 多核 |
 | `selfplay_cuda0.sh` | MCTS 自博弈 — GPU 0 | GPU 0 + CPU |
 | `selfplay_cuda1.sh` | MCTS 自博弈 — GPU 1 | GPU 1 + CPU |
 
@@ -32,11 +32,13 @@ wait
 
 ### selfplay_ab.sh
 
+采用**双深度非对称**策略：前一半 worker 黑强白弱（D vs D-1），后一半白强黑弱（D-1 vs D），打破镜像僵局以减少超时平局。
+
 | 环境变量 | 默认值 | 说明 |
 |---------|--------|------|
-| `ALPHABETA_DEPTH` | 6 | AlphaBeta 搜索深度 |
+| `ALPHABETA_DEPTH` | 6 | 较强方的搜索深度（较弱方 = D-1） |
 | `OUTPUT_DIR` | `data/selfplay_ab` | JSONL 输出目录 |
-| `NUM_WORKERS` | 8 | 并行进程数 |
+| `NUM_WORKERS` | 8 | 并行进程数（应为偶数，各半分配） |
 | `BASE_SEED` | 7021 | 起始随机种子（各 worker 递增） |
 | `GAMES` | 500 | 每个 worker 生成局数 |
 | `OPENING_RANDOM_PLIES` | 8 | 开局随机半回合数 |
