@@ -23,6 +23,11 @@ draughts/                 核心 Python 库
   ├── dataset.py            JSONL 加载、内存缓存、worker 内 tensor 拼批、软标签支持
   └── config/               YAML 配置（模型结构、搜索参数、评估权重）
 trainer/                  训练入口（train_supervised.py，硬标签/软标签自动兼容）
+run/                      批量并行 shell 脚本
+  ├── selfplay_ab.sh         AlphaBeta 自博弈并行
+  ├── selfplay_cuda0.sh     MCTS 自博弈 GPU 0
+  ├── selfplay_cuda1.sh     MCTS 自博弈 GPU 1
+  └── search_improve.sh     AlphaBeta 并行重新打分
 scripts/                  独立应用
   ├── selfplay.py           对局 → JSONL 数据（支持所有 agent）
   ├── search_improve.py     AlphaBeta 对已有数据重新打分

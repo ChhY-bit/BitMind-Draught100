@@ -11,6 +11,7 @@
 | `selfplay_ab.sh` | AlphaBeta 自博弈（双深度非对称） | CPU 多核 |
 | `selfplay_cuda0.sh` | MCTS 自博弈 — GPU 0 | GPU 0 + CPU |
 | `selfplay_cuda1.sh` | MCTS 自博弈 — GPU 1 | GPU 1 + CPU |
+| `search_improve.sh` | AlphaBeta 并行重新打分（打软标签） | CPU 多核 |
 
 ## 用法
 
@@ -54,3 +55,35 @@ wait
 | `GAMES` | 500 | 500 | 每个 worker 生成局数 |
 
 > **注意**：`selfplay_cuda0.sh` 和 `selfplay_cuda1.sh` 需配合使用，分别绑定 GPU 0 和 GPU 1。单卡环境只跑其中一个即可。
+
+### search_improve.sh
+
+用高等 AlphaBeta 对已有 JSONL 数据重新打分，生成软标签（policy target probabilities）。
+
+采用**按文件数均分**策略：将输入目录/文件下的所有 JSONL 文件收集后，均分给各 worker。文件数少于 worker 数时自动缩减 worker 数。
+
+```bash
+# 基本用法（使用默认参数）
+./run/search_improve.sh
+
+# 自定义参数
+INPUT="data/alphabeta/ab_base data/alphabeta/ab_plus" \
+OUTPUT=data/alphabeta/improved_soft.jsonl \
+NUM_WORKERS=8 \
+ALPHABETA_DEPTH=7 \
+TEMPERATURE=100 \
+MIN_SCORE_MARGIN=0 \
+./run/search_improve.sh
+```
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `INPUT` | `data/alphabeta` | 输入 JSONL 文件或目录（空格分隔多个路径） |
+| `OUTPUT` | `data/alphabeta/improved_soft.jsonl` | 合并后的输出 JSONL 路径 |
+| `NUM_WORKERS` | 8 | 并行进程数 |
+| `ALPHABETA_DEPTH` | 7 | Teacher AlphaBeta 搜索深度 |
+| `TEMPERATURE` | 100 | Softmax 温度（越高分布越软） |
+| `MIN_SCORE_MARGIN` | 0 | 最低分数边距（0 = 不过滤，设高可筛除模糊局面） |
+| `BASE_SEED` | 2026 | 起始随机种子（各 worker 递增） |
+
+> **注意**：如果输入只有少量大文件，各 worker 分到的行数可能不均。可先用 `split -n l/<N>` 将大文件按行数拆分为小文件后再跑。

@@ -88,6 +88,17 @@ PYTHONPATH=interface:. python3 scripts/search_improve.py \
 | `--log-interval` | int | 100 | 每隔多少样本打印一次进度 |
 | `--seed` | int | 1 | 随机种子 |
 
+### 并行化
+
+单进程 `search_improve.py` 对大样本量会很慢，可用 `run/search_improve.sh` 多进程并行：
+
+```bash
+INPUT="data/alphabeta" OUTPUT=data/alphabeta/improved_soft.jsonl \
+NUM_WORKERS=8 ALPHABETA_DEPTH=7 ./run/search_improve.sh
+```
+
+详见 [run/README-run.md](../run/README-run.md)。
+
 ---
 
 ## `arena.py` — 批量对战评测
