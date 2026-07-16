@@ -18,7 +18,7 @@ cd "$(dirname "$0")/.."
 # ── 参数 ──────────────────────────────────────────────
 INPUT="${INPUT:-data/alphabeta}"
 OUTPUT="${OUTPUT:-data/alphabeta/improved_soft.jsonl}"
-NUM_WORKERS="${NUM_WORKERS:-8}"
+NUM_WORKERS="${NUM_WORKERS:-64}"
 ALPHABETA_DEPTH="${ALPHABETA_DEPTH:-7}"
 TEMPERATURE="${TEMPERATURE:-100}"
 MIN_SCORE_MARGIN="${MIN_SCORE_MARGIN:-0}"
