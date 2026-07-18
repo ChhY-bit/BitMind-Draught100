@@ -213,6 +213,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-dir", default=str(DEFAULT_CHECKPOINT_DIR))
     parser.add_argument("--resume", default=None, help="Checkpoint path to continue training from.")
     parser.add_argument("--device", default=None, help="cpu, cuda, or cuda:0. Defaults to auto.")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed (overrides config file).")
     parser.add_argument(
         "--save-every-epoch",
         action="store_true",
@@ -266,6 +267,8 @@ def apply_cli_overrides(config: SupervisedConfig, args: argparse.Namespace) -> S
         overrides["batch_size"] = args.batch_size
     if args.lr is not None:
         overrides["learning_rate"] = args.lr
+    if args.seed is not None:
+        overrides["seed"] = args.seed
 
     if not overrides:
         return config
@@ -280,6 +283,8 @@ def apply_cli_overrides(config: SupervisedConfig, args: argparse.Namespace) -> S
         print(f"supervised: CLI override batch_size={args.batch_size}", flush=True)
     if args.lr is not None:
         print(f"supervised: CLI override lr={args.lr}", flush=True)
+    if args.seed is not None:
+        print(f"supervised: CLI override seed={args.seed}", flush=True)
     return merged
 
 
