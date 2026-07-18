@@ -34,6 +34,7 @@ class MCTSConfig:
     temperature: float = 0.0
     dirichlet_alpha: float = 0.3
     dirichlet_epsilon: float = 0.25
+    add_noise: bool = True
 
     def validate(self) -> None:
         if self.num_simulations <= 0:
@@ -452,6 +453,7 @@ def load_mcts_config(config_path: Optional[str] = None) -> MCTSConfig:
         "temperature": default_config.temperature,
         "dirichlet_alpha": default_config.dirichlet_alpha,
         "dirichlet_epsilon": default_config.dirichlet_epsilon,
+        "add_noise": default_config.add_noise,
     }
     values = dict(defaults)
     values.update(_load_scalar_yaml(path, defaults, "mcts"))

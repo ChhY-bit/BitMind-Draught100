@@ -251,7 +251,7 @@ class MCTSAgent(Agent):
             self.model,
             self.mcts_config,
             self.device_obj,
-            add_noise=False,
+            add_noise=self.mcts_config.add_noise,
         )
         return self.last_result.selected_action(temperature=self.mcts_config.temperature)
 

@@ -10,19 +10,24 @@ set -e
 
 cd "$(dirname "$0")/.."
 
+# 显式追踪所有 worker PID，Ctrl+C 时逐个 kill，不依赖 bash 作业表
+PIDS=()
+
 cleanup() {
-    set +e  # 防止 set -e 在信号处理中途退出
+    set +e
     echo ""
     echo "Caught signal — stopping all workers..."
-    jobs -p | xargs -r kill -INT 2>/dev/null
-    for _i in $(seq 1 5); do
-        if ! jobs -p | grep -q . 2>/dev/null; then
-            break
-        fi
-        sleep 1
+    for pid in "${PIDS[@]}"; do
+        kill -TERM "$pid" 2>/dev/null || true
     done
-    jobs -p | xargs -r kill -9 2>/dev/null
-    wait 2>/dev/null
+    sleep 2
+    for pid in "${PIDS[@]}"; do
+        kill -KILL "$pid" 2>/dev/null || true
+    done
+    # 等待所有子进程真正结束
+    for pid in "${PIDS[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
     echo "All workers stopped."
     exit 1
 }
@@ -56,6 +61,7 @@ for i in $(seq 0 $((HALF - 1))); do
         --opening-random-plies "$OPENING_RANDOM_PLIES" \
         --output "$OUTPUT_DIR/selfplay_$(printf '%03d' "$i").jsonl" \
         --seed $((BASE_SEED + i)) &
+    PIDS+=($!)
 done
 
 # 后一半：白强黑弱
@@ -69,8 +75,11 @@ for i in $(seq "$HALF" $((NUM_WORKERS - 1))); do
         --opening-random-plies "$OPENING_RANDOM_PLIES" \
         --output "$OUTPUT_DIR/selfplay_$(printf '%03d' "$i").jsonl" \
         --seed $((BASE_SEED + i)) &
+    PIDS+=($!)
 done
 
-echo "All $NUM_WORKERS workers launched."
-wait || true
+echo "All $NUM_WORKERS workers launched (PIDs: ${PIDS[*]})."
+for pid in "${PIDS[@]}"; do
+    wait "$pid" || true
+done
 echo "AB selfplay done."

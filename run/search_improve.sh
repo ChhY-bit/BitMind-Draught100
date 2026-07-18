@@ -82,19 +82,22 @@ fi
 split -n "l/$NUM_WORKERS" -d --additional-suffix=.jsonl "$MERGED_INPUT" "$TMPDIR/chunk_"
 
 # ── 各 worker 并行处理自己的 chunk ────────────────────
+PIDS=()
+
 cleanup() {
-    set +e  # 防止 set -e 在信号处理中途退出
+    set +e
     echo ""
     echo "Caught signal — stopping all workers..."
-    jobs -p | xargs -r kill -INT 2>/dev/null
-    for _i in $(seq 1 5); do
-        if ! jobs -p | grep -q . 2>/dev/null; then
-            break
-        fi
-        sleep 1
+    for pid in "${PIDS[@]}"; do
+        kill -TERM "$pid" 2>/dev/null || true
     done
-    jobs -p | xargs -r kill -9 2>/dev/null
-    wait 2>/dev/null
+    sleep 2
+    for pid in "${PIDS[@]}"; do
+        kill -KILL "$pid" 2>/dev/null || true
+    done
+    for pid in "${PIDS[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
     echo "All workers stopped."
     exit 1
 }
@@ -116,10 +119,13 @@ for chunk in "$TMPDIR"/chunk_*.jsonl; do
         --min-score-margin "$MIN_SCORE_MARGIN" \
         --seed $((BASE_SEED + 10#${i})) \
         --log-interval 100 &
+    PIDS+=($!)
 done
 
-echo "All $NUM_WORKERS workers launched."
-wait || true
+echo "All $NUM_WORKERS workers launched (PIDs: ${PIDS[*]})."
+for pid in "${PIDS[@]}"; do
+    wait "$pid" || true
+done
 
 # ── 合并 ──────────────────────────────────────────────
 echo "Merging outputs..."

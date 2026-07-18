@@ -36,12 +36,13 @@ c_puct: 1.5
 #   - temperature：  决策层（MCTS 外部）—— 干预最终走法选择，影响对局多样性。
 #   两者都在制造多样性，但作用的维度不同。
 #
-#   0.0（默认）→ 确定性选择，总是选访问次数最多的走法（评测用）。
+#   0.0（默认）→ 确定性选择，总是选访问次数最多的走法（评测/实战用）。
 #   1.0        → 按 visit count 分布比例采样（自博弈用，增加对局多样性）。
 #   > 1.0      → 更平均，走法选择更随机。
 #   0 ~ 1      → 更尖锐，更倾向选 visit count 高的走法。
 #
-# 评测时务必设为 0.0，自博弈（Phase 3）可设为 1.0。
+# 评测/实战时务必设为 0.0，自博弈建议设为 1.0。与 add_noise 一样，温度
+# 也是"自博弈开启、实战关闭"的参数。
 temperature: 0.0
 
 # dirichlet_alpha — Dirichlet 噪声的浓度参数（仅自博弈生效，由 add_noise 控制）。
@@ -57,8 +58,7 @@ temperature: 0.0
 # α 越大 → 噪声越"平"（均匀撒在所有走法上）。
 # 棋盘分支因子越大，α 通常越小。国际跳棋推荐 0.2 ~ 0.5。
 #
-# 注意：当前代码中 MCTSAgent.select_action() 硬编码 add_noise=False，
-# 此参数暂未生效。启用需将 agents.py 中 add_noise=False 改为 True。
+# 注意：由 add_noise 配置项控制是否启用，评测/实战时应设为 false。
 dirichlet_alpha: 0.3
 
 # dirichlet_epsilon — 噪声混合比例。
@@ -69,3 +69,18 @@ dirichlet_alpha: 0.3
 # 0.25 → 25% 来自噪声，75% 来自网络（AlphaZero 标准值）。
 # 1.0  → 完全用噪声替换网络先验（几乎等同于纯 MCTS）。
 dirichlet_epsilon: 0.25
+
+# add_noise — 是否在根节点添加 Dirichlet 噪声（仅自博弈生效）。
+#
+# 自博弈时开启，增加对局多样性；评测/实战时关闭，追求最强走法。
+#
+# 与 dirichlet_epsilon 的关系（等价性）：
+#   add_noise = false  →  不采样 Dirichlet，零开销，等价于 ε = 0.0。
+#   add_noise = true, ε = 0.0  →  采样但混合权重为 0，效果等同不加噪声。
+#   两种方式都可以关闭噪声，推荐直接设 add_noise = false 更直观。
+#
+# 为什么实战不加入噪声？
+#   噪声会刻意引导 MCTS 探索网络不看好的走法。自博弈时需要这种"反事实"
+#   探索来产生多样化的训练数据，但实战中就是纯粹降低棋力。这和 temperature
+#   的逻辑一致：自博弈 temp=1.0 增加多样性，实战 temp=0.0 选最强走法。
+add_noise: true

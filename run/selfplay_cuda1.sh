@@ -6,25 +6,29 @@ set -e
 
 cd "$(dirname "$0")/.."
 
+PIDS=()
+
 cleanup() {
-    set +e  # 防止 set -e 在信号处理中途退出
+    set +e
     echo ""
     echo "Caught signal — stopping all workers..."
-    jobs -p | xargs -r kill -INT 2>/dev/null
-    for _i in $(seq 1 5); do
-        if ! jobs -p | grep -q . 2>/dev/null; then
-            break
-        fi
-        sleep 1
+    for pid in "${PIDS[@]}"; do
+        kill -TERM "$pid" 2>/dev/null || true
     done
-    jobs -p | xargs -r kill -9 2>/dev/null
-    wait 2>/dev/null
+    sleep 2
+    for pid in "${PIDS[@]}"; do
+        kill -KILL "$pid" 2>/dev/null || true
+    done
+    for pid in "${PIDS[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
     echo "All workers stopped."
     exit 1
 }
 trap cleanup SIGINT SIGTERM
 
 CHECKPOINT="${CHECKPOINT:-trainer/checkpoints/round5/candidate_move_net_best.pt}"
+MCTS_CONFIG="${MCTS_CONFIG:-draughts/config/mcts.yaml}"
 OUTPUT_DIR="${OUTPUT_DIR:-data/selfplay_cuda1}"
 NUM_WORKERS="${NUM_WORKERS:-12}"
 BASE_SEED="${BASE_SEED:-8021}"
@@ -34,7 +38,8 @@ mkdir -p "$OUTPUT_DIR"
 
 echo "=== GPU 1: $NUM_WORKERS workers × $GAMES games each ==="
 echo "    checkpoint: $CHECKPOINT"
-echo "    output:     $OUTPUT_DIR"
+echo "    mcts config: $MCTS_CONFIG"
+echo "    output:      $OUTPUT_DIR"
 
 for i in $(seq 0 $((NUM_WORKERS - 1))); do
     OMP_NUM_THREADS=2 PYTHONPATH=interface:. \
@@ -44,11 +49,15 @@ for i in $(seq 0 $((NUM_WORKERS - 1))); do
         --white-checkpoint "$CHECKPOINT" \
         --games "$GAMES" \
         --opening-random-plies 6 \
+        --mcts-config "$MCTS_CONFIG" \
         --device cuda:1 \
         --output "$OUTPUT_DIR/selfplay_$(printf '%03d' "$i").jsonl" \
         --seed $((BASE_SEED + i)) &
+    PIDS+=($!)
 done
 
-echo "All $NUM_WORKERS workers launched on GPU 1."
-wait || true
+echo "All $NUM_WORKERS workers launched on GPU 1 (PIDs: ${PIDS[*]})."
+for pid in "${PIDS[@]}"; do
+    wait "$pid" || true
+done
 echo "GPU 1 done."
