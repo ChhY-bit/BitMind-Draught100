@@ -11,6 +11,7 @@ set -e
 cd "$(dirname "$0")/.."
 
 cleanup() {
+    set +e  # 防止 set -e 在信号处理中途退出
     echo ""
     echo "Caught signal — stopping all workers..."
     # 先尝试温和终止（给 C 引擎调用的间隙捕获信号）
@@ -26,6 +27,7 @@ cleanup() {
     jobs -p | xargs -r kill -9 2>/dev/null
     wait 2>/dev/null
     echo "All workers stopped."
+    exit 1
 }
 trap cleanup SIGINT SIGTERM
 
@@ -55,5 +57,5 @@ for i in $(seq 0 $((NUM_WORKERS - 1))); do
 done
 
 echo "All $NUM_WORKERS workers launched on GPU 0."
-wait
+wait || true
 echo "GPU 0 done."

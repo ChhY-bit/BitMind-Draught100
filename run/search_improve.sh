@@ -83,6 +83,7 @@ split -n "l/$NUM_WORKERS" -d --additional-suffix=.jsonl "$MERGED_INPUT" "$TMPDIR
 
 # ── 各 worker 并行处理自己的 chunk ────────────────────
 cleanup() {
+    set +e  # 防止 set -e 在信号处理中途退出
     echo ""
     echo "Caught signal — stopping all workers..."
     jobs -p | xargs -r kill -INT 2>/dev/null
@@ -95,6 +96,7 @@ cleanup() {
     jobs -p | xargs -r kill -9 2>/dev/null
     wait 2>/dev/null
     echo "All workers stopped."
+    exit 1
 }
 trap cleanup SIGINT SIGTERM
 
@@ -117,7 +119,7 @@ for chunk in "$TMPDIR"/chunk_*.jsonl; do
 done
 
 echo "All $NUM_WORKERS workers launched."
-wait
+wait || true
 
 # ── 合并 ──────────────────────────────────────────────
 echo "Merging outputs..."
