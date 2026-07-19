@@ -81,7 +81,7 @@ run_arena() {
     local black_ckpt="$5" white_ckpt="$6" seed="$7"
     local out="$TMPDIR/${label}.log"
 
-    echo "  [$label] $black vs $white on $device (seed=$seed)"
+    echo "  [$label] $black vs $white on $device (seed=$seed)  → $out"
 
     PYTHONPATH=interface:. python3 scripts/arena.py \
         --black "$black" --white "$white" \
@@ -119,6 +119,13 @@ run_arena "old_new_cuda1" "cuda:1" "mcts" "mcts" \
 
 echo ""
 echo "All 6 arenas launched (PIDs: ${PIDS[*]})."
+echo ""
+echo "Watch progress:"
+echo "  tail -f $TMPDIR/*.log        # 实时滚动所有日志"
+echo "  tail -f $TMPDIR/ab_new_cuda0.log  # 只看某一场"
+echo "  grep arena: $TMPDIR/*.log    # 看各场当前进度"
+echo "  ls -lh $TMPDIR/              # 看各场日志文件大小"
+echo ""
 echo "Waiting for completion..."
 echo ""
 
