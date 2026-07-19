@@ -70,6 +70,8 @@ PYTHONPATH=interface:. python3 scripts/search_improve.py data/ \
 ```
 
 > **参数说明**：`--alphabeta-depth` 设置 Teacher 搜索深度，`--min-score-margin` 过滤低置信度局面，`--temperature` 控制软标签平滑度。完整参数表见 [scripts/README-scripts.md](scripts/README-scripts.md)。
+>
+> 大规模数据重新打分可使用 `./run/search_improve.sh` 并行加速，详见[多进程提升利用率](#多进程提升利用率)。
 
 **第三步**：训练神经网络。
 
@@ -101,6 +103,8 @@ PYTHONPATH=interface:. python3 scripts/selfplay.py \
 ```
 
 > **参数说明**：`--black-checkpoint`/`--white-checkpoint` 指定双方网络权重，`--seed` 保证对局可复现，`--mcts-config` 可传入自定义 MCTS 参数（sims、c_puct、温度等）。完整参数表见 [scripts/README-scripts.md](scripts/README-scripts.md)。
+>
+> 大规模生成数据时，有 GPU 用 `./run/selfplay_cuda0.sh`/`./run/selfplay_cuda1.sh`，无 GPU 用 `./run/selfplay_cpu.sh`，详见[多进程提升利用率](#多进程提升利用率)。
 
 **第二步**：从头训练新一代网络。
 
@@ -225,12 +229,22 @@ GAMES=200 NUM_WORKERS=8 CHECKPOINT=trainer/checkpoints/round6/best.pt \
 ./run/selfplay_cuda1.sh &
 wait
 
+# MCTS 自博弈（CPU 无 GPU 时使用）：4 进程 × 200 局
+CHECKPOINT=trainer/checkpoints/round5/best.pt \
+  NUM_WORKERS=4 GAMES=200 \
+  ./run/selfplay_cpu.sh
+
 # AlphaBeta 自博弈（CPU 多进程）：16 进程 × 200 局
-ALPHABETA_DEPTH=8 OPENING_RANDOM_PLIES=GAMES=200 NUM_WORKERS=16 \
+ALPHABETA_DEPTH=6 GAMES=200 NUM_WORKERS=16 OPENING_RANDOM_PLIES=8 \
   ./run/selfplay_ab.sh
+
+# AlphaBeta 批量重新打分：深度 7 Teacher 给已有数据打软标签
+INPUT="data/" OUTPUT=data/improved_soft.jsonl \
+  NUM_WORKERS=8 ALPHABETA_DEPTH=7 TEMPERATURE=100 \
+  ./run/search_improve.sh
 ```
 
-所有参数均可通过环境变量覆盖，每个进程独立搜索，多进程并发即可让 CPU/GPU 饱和。
+所有参数均可通过环境变量覆盖，完整参数表见 [run/README-run.md](run/README-run.md)。每个进程独立搜索，多进程并发即可让 CPU/GPU 饱和。
 
 ---
 
