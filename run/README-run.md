@@ -9,6 +9,7 @@
 | 脚本 | 用途 | 计算资源 |
 |------|------|---------|
 | `selfplay_ab.sh` | AlphaBeta 自博弈（双深度非对称） | CPU 多核 |
+| `selfplay_cpu.sh` | MCTS 自博弈 — CPU | CPU 多核 |
 | `selfplay_cuda0.sh` | MCTS 自博弈 — GPU 0 | GPU 0 + CPU |
 | `selfplay_cuda1.sh` | MCTS 自博弈 — GPU 1 | GPU 1 + CPU |
 | `search_improve.sh` | AlphaBeta 并行重新打分（打软标签） | CPU 多核 |
@@ -28,6 +29,11 @@ GAMES=2000 NUM_WORKERS=8 CHECKPOINT=trainer/checkpoints/round6/best.pt \
   ./run/selfplay_cuda0.sh &
 ./run/selfplay_cuda1.sh &
 wait
+
+# MCTS 自博弈（CPU，无 GPU 时使用）
+CHECKPOINT=trainer/checkpoints/round5/best.pt \
+  NUM_WORKERS=4 GAMES=200 \
+  ./run/selfplay_cpu.sh
 ```
 
 ## 参数
@@ -59,6 +65,19 @@ wait
 > **注意**：`selfplay_cuda0.sh` 和 `selfplay_cuda1.sh` 需配合使用，分别绑定 GPU 0 和 GPU 1。单卡环境只跑其中一个即可。
 >
 > **关于 MCTS 配置**：自博弈时应使用开启了 `temperature` 和 `add_noise` 的配置以增加对局多样性；评测时则应关闭这两项以追求最强走法。详见 [`draughts/config/mcts.yaml`](../draughts/config/mcts.yaml) 中的注释。
+
+### selfplay_cpu.sh
+
+GPU 不可用时，MCTS 自博弈可退回到 CPU 运行。CPU 上网络推理较慢，建议 worker 数设为总核数的 1/4 ~ 1/2。
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `CHECKPOINT` | `trainer/checkpoints/round5/...` | 网络权重路径 |
+| `MCTS_CONFIG` | `draughts/config/mcts.yaml` | MCTS 搜索配置文件 |
+| `OUTPUT_DIR` | `data/selfplay_cpu` | JSONL 输出目录 |
+| `NUM_WORKERS` | 4 | 并行进程数（建议 ≤ 核数/2） |
+| `BASE_SEED` | 9021 | 起始随机种子（各 worker 递增） |
+| `GAMES` | 500 | 每个 worker 生成局数 |
 
 ### search_improve.sh
 
