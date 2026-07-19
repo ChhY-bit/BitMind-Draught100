@@ -25,10 +25,12 @@ draughts/                 核心 Python 库
 trainer/                  训练入口（train_supervised.py，硬标签/软标签自动兼容）
 run/                      批量并行 shell 脚本
   ├── selfplay_ab.sh         AlphaBeta 自博弈并行
+  ├── selfplay_ab.sh         AlphaBeta 自博弈并行
   ├── selfplay_cpu.sh       MCTS 自博弈 CPU
   ├── selfplay_cuda0.sh     MCTS 自博弈 GPU 0
   ├── selfplay_cuda1.sh     MCTS 自博弈 GPU 1
-  └── search_improve.sh     AlphaBeta 并行重新打分
+  ├── search_improve.sh     AlphaBeta 并行重新打分
+  └── benchmark.sh          多维度批量评测
 scripts/                  独立应用
   ├── selfplay.py           对局 → JSONL 数据（支持所有 agent）
   ├── search_improve.py     AlphaBeta 对已有数据重新打分

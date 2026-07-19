@@ -13,6 +13,7 @@
 | `selfplay_cuda0.sh` | MCTS 自博弈 — GPU 0 | GPU 0 + CPU |
 | `selfplay_cuda1.sh` | MCTS 自博弈 — GPU 1 | GPU 1 + CPU |
 | `search_improve.sh` | AlphaBeta 并行重新打分（打软标签） | CPU 多核 |
+| `benchmark.sh` | 多维度批量评测 + 汇总报告 | GPU 0 + GPU 1 |
 
 ## 用法
 
@@ -110,3 +111,44 @@ MIN_SCORE_MARGIN=0 \
 | `BASE_SEED` | 2026 | 起始随机种子（各 worker 递增） |
 
 > **注意**：如果输入只有少量大文件，各 worker 分到的行数可能不均。可先用 `split -n l/<N>` 将大文件按行数拆分为小文件后再跑。
+
+### benchmark.sh
+
+并行跑 6 场对战（3 组 × 正反方向），消除先后手偏差，输出带时间戳的汇总报告。
+
+**三组评测**：
+1. AlphaBeta vs 新网络 MCTS
+2. AlphaBeta vs 旧网络 MCTS
+3. 新网络 MCTS vs 旧网络 MCTS
+
+每组正反各一场（cuda0 正向, cuda1 反向），合计 6 场。
+
+```bash
+# 基本用法
+NEW_CHECKPOINT=trainer/checkpoints/round5/best.pt \
+  OLD_CHECKPOINT=trainer/checkpoints/candidate_move_net_best.pt \
+  ./run/benchmark.sh
+
+# 完整示例
+NEW_CHECKPOINT=trainer/checkpoints/round5/best.pt \
+  OLD_CHECKPOINT=trainer/checkpoints/round4/best.pt \
+  ALPHABETA_DEPTH=3 GAMES=200 \
+  ./run/benchmark.sh
+```
+
+报告保存在 `run/benchmark_YYYYMMDD_HHMMSS.txt`，包含每场的原始日志和汇总胜率表。
+
+> **注意**：6 场 arena 同时在两张 GPU 上跑，每张 GPU 跑 3 个 MCTS 进程。MCTS 搜索本身已消耗显存，3 进程叠加可能导致 OOM。如果显存不足，可降低 `GAMES` 或每卡只跑 1-2 场。
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `NEW_CHECKPOINT` | `trainer/checkpoints/round5/...` | 新网络权重路径 |
+| `OLD_CHECKPOINT` | `trainer/checkpoints/candidate_move_net_best.pt` | 旧网络权重路径 |
+| `ALPHABETA_DEPTH` | 3 | AlphaBeta 搜索深度 |
+| `GAMES` | 100 | 每场对局数（每方向，合计 2×） |
+| `MCTS_CONFIG` | `draughts/config/mcts.yaml` | MCTS 搜索配置（评测应设 temp=0, noise=false） |
+| `OPENING_RANDOM_PLIES` | 6 | 开局随机半回合数 |
+| `MAX_PLIES` | 300 | 最大半回合数 |
+| `LOG_INTERVAL` | 20 | arena 日志输出间隔 |
+| `SEED` | 42 | 基准随机种子（各场递增） |
+| `REPORT_DIR` | `run/` | 报告输出目录 |
