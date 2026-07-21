@@ -70,6 +70,8 @@ class CandidateMoveNet(nn.Module):
         observation: torch.Tensor,
         move_features: torch.Tensor,
         move_mask: torch.Tensor | None = None,
+        *,
+        return_latent: bool = False,
     ) -> dict[str, torch.Tensor]:
         if observation.ndim != 4:
             raise ValueError("observation must have shape [B, 6, 10, 10]")
@@ -89,10 +91,13 @@ class CandidateMoveNet(nn.Module):
             policy_logits = policy_logits.masked_fill(move_mask <= 0, MASKED_LOGIT)
 
         value = self.value_head(board_feature).squeeze(-1)
-        return {
+        result: dict[str, torch.Tensor] = {
             "policy_logits": policy_logits,
             "value": value,
         }
+        if return_latent:
+            result["latent"] = score_input  # [B, M, 384]
+        return result
 
 
 def build_board_encoder(config: ModelConfig) -> nn.Sequential:

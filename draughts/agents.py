@@ -182,6 +182,7 @@ class SupervisedAgent(Agent):
         self.model.eval()
         self.last_policy_logits: Optional[List[float]] = None
         self.last_value: Optional[float] = None
+        self.last_latent: Optional[torch.Tensor] = None
 
     def select_action(
         self,
@@ -207,9 +208,10 @@ class SupervisedAgent(Agent):
                 device=self.device_obj,
             )
             move_mask = torch.ones((1, len(legal_actions)), dtype=torch.float32, device=self.device_obj)
-            output = self.model(observation_tensor, move_tensor, move_mask)
+            output = self.model(observation_tensor, move_tensor, move_mask, return_latent=True)
             self.last_policy_logits = output["policy_logits"][0].tolist()
             self.last_value = float(output["value"][0].item())
+            self.last_latent = output.get("latent")  # [1, M, 384]
             selected_index = int(output["policy_logits"][0].argmax().item())
         return legal_actions[selected_index].action_id
 

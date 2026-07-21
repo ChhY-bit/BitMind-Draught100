@@ -96,6 +96,7 @@ class MCTSResult:
     policy_probs: list[float]
     action_ids: list[int]
     network_value: float = 0.0
+    q_values: dict[int, float] = field(default_factory=dict)
 
     def selected_action(self, temperature: float = 0.0) -> int:
         """Pick an action from the visit-count distribution.
@@ -179,9 +180,11 @@ def mcts_search(
 
     # --- aggregate results ---
     visit_counts: dict[int, int] = {}
+    q_values: dict[int, float] = {}
     total_visits = 0
     for action_id, child in root.children.items():
         visit_counts[action_id] = child.visit_count
+        q_values[action_id] = child.q()
         total_visits += child.visit_count
 
     action_ids = [m.action_id for m in legal_actions]
@@ -193,9 +196,20 @@ def mcts_search(
         # Degenerate case — should not happen with num_simulations > 0
         policy_probs = [1.0 / len(action_ids)] * len(action_ids)
 
+    # Compute root value as the visit-weighted average of children's Q,
+    # since root.total_value is never set during backprop (only edges get
+    # value updates; the root node itself is never a child of anyone).
+    if total_visits > 0:
+        root_value = sum(
+            child.q() * child.visit_count for child in root.children.values()
+        ) / total_visits
+    else:
+        root_value = float(_root_value)
+
     return MCTSResult(
         visit_counts=visit_counts,
-        root_value=root.q(),
+        q_values=q_values,
+        root_value=root_value,
         policy_probs=policy_probs,
         action_ids=action_ids,
         network_value=float(_root_value),

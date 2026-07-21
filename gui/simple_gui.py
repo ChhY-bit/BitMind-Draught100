@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 from collections import deque
 from dataclasses import dataclass
@@ -384,6 +385,8 @@ _TRANSLATIONS = {
     # ---- Treeview headings ----
     "tree_action":          {"zh": "编号",                    "en": "ID"},
     "tree_prob":            {"zh": "概率",                    "en": "Prob"},
+    "tree_qval":            {"zh": "Q值",                     "en": "Q"},
+    "tree_visits":          {"zh": "访问",                    "en": "N"},
     "tree_path":            {"zh": "路径",                    "en": "Path"},
     "tree_captures":        {"zh": "吃子",                    "en": "Captures"},
 
@@ -401,6 +404,9 @@ _TRANSLATIONS = {
                              "en": "{sims} sims (c_puct={c_puct})"},
     "analysis_depth":       {"zh": "depth={depth}",           "en": "depth={depth}"},
     "analysis_best_fmt":    {"zh": "#{aid} ({pct:.1f}%)",     "en": "#{aid} ({pct:.1f}%)"},
+    "analysis_delta":       {"zh": "搜索修正",                "en": "Search Δ"},
+    "analysis_delta_fmt":   {"zh": "网络{netv:+.2f}→搜索{searchv:+.2f}",
+                             "en": "Net{netv:+.2f}→Search{searchv:+.2f}"},
     "analysis_na":          {"zh": "—",                       "en": "—"},
 
     # ---- Side labels ----
@@ -512,6 +518,15 @@ _TRANSLATIONS = {
     "log_rewind":           {"zh": "已回溯至第 {ply} 步",       "en": "Rewound to ply {ply}"},
     "log_rewind_paused":    {"zh": "已暂停对弈并回溯至第 {ply} 步",
                              "en": "Paused game and rewound to ply {ply}"},
+    # -- hardware monitor --
+    "mon_frame":            {"zh": "系统监控",                "en": "System Monitor"},
+    "mon_cpu":              {"zh": "CPU 总利用率",             "en": "CPU Usage"},
+    "mon_ram":              {"zh": "系统内存",                "en": "Sys RAM"},
+    "mon_proc":             {"zh": "进程 CPU",               "en": "Proc CPU"},
+    "mon_gpu":              {"zh": "GPU 利用率",              "en": "GPU Usage"},
+    "mon_vram":             {"zh": "显存占用",                "en": "VRAM"},
+    "mon_temp":             {"zh": "GPU 温度",               "en": "GPU Temp"},
+    "mon_no_gpu":           {"zh": "无 GPU",                 "en": "No GPU"},
 }
 
 
@@ -531,9 +546,12 @@ class PlayerAnalysis:
     """Rich analysis data produced by an AI player during move selection."""
 
     value: Optional[float] = None
+    search_value: Optional[float] = None  # MCTS root Q (may differ from network value)
     policy_probs: Optional[dict[int, float]] = None
     search_info: Optional[dict[str, object]] = None
     analysed_action_ids: Optional[set[int]] = None
+    visit_counts: Optional[dict[int, int]] = None
+    q_values: Optional[dict[int, float]] = None
 
 
 @dataclass
@@ -716,27 +734,32 @@ class MCTSPlayer:
             self.last_analysis = PlayerAnalysis()
             return
 
-        # Build a lookup: action_id → probability from the search result.
         search_lookup: dict[int, float] = dict(
             zip(result.action_ids, result.policy_probs)
         )
-        # Populate probs for every GUI legal move so the probability
-        # column is always complete, even if search / GUI action-ids
-        # were to diverge (they shouldn't, but this is defensive).
         probs_dict: dict[int, float] = {}
+        visits_dict: dict[int, int] = {}
+        qvals_dict: dict[int, float] = {}
         for move in moves:
             prob = search_lookup.get(move.action_id)
             if prob is not None:
                 probs_dict[move.action_id] = prob
+            if result.visit_counts:
+                visits_dict[move.action_id] = result.visit_counts.get(move.action_id, 0)
+            if result.q_values:
+                qvals_dict[move.action_id] = result.q_values.get(move.action_id, 0.0)
 
         self.last_analysis = PlayerAnalysis(
             value=result.network_value,
+            search_value=result.root_value,
             policy_probs=probs_dict,
             search_info={
                 "simulations": self.agent.mcts_config.num_simulations,
                 "c_puct": self.agent.mcts_config.c_puct,
             },
             analysed_action_ids=set(m.action_id for m in moves),
+            visit_counts=visits_dict if visits_dict else None,
+            q_values=qvals_dict if qvals_dict else None,
         )
 
     def infer_value(self, gui_env: DraughtsEnv) -> Optional[float]:
@@ -1094,6 +1117,7 @@ class ValueCurve(tk.Frame):
         self.canvas.configure(xscrollcommand=self.scrollbar.set)
 
         self.canvas.bind("<Button-1>", self._on_canvas_click)
+        self.canvas.bind("<Configure>", lambda _e: self._redraw())
         self._redraw()
 
     # -- layout helpers ---------------------------------------------------
@@ -1115,7 +1139,15 @@ class ValueCurve(tk.Frame):
         return self.MARGIN_LEFT
 
     def _plot_right(self) -> int:
-        return self._plot_left + max(len(self._points) * self.POINT_SPACING, self._MIN_PLOT_PX)
+        # Use the available canvas width as the minimum, so the plot fills
+        # the panel even with few points.  When points grow beyond canvas
+        # width the horizontal scrollbar activates.
+        canvas_w = self.canvas.winfo_width()
+        if canvas_w < 20:  # not yet drawn — fall back to hard-coded minimum
+            canvas_w = self._MIN_PLOT_PX + self.MARGIN_LEFT + self.MARGIN_RIGHT
+        available_w = max(canvas_w - self.MARGIN_LEFT - self.MARGIN_RIGHT, self._MIN_PLOT_PX)
+        needed_w = len(self._points) * self.POINT_SPACING
+        return self._plot_left + max(needed_w, available_w)
 
     # -- value → coordinate helpers ---------------------------------------
 
@@ -1349,6 +1381,391 @@ class ValueCurve(tk.Frame):
 
         if closest_ply >= 0 and closest_dist <= 10:
             self._on_point_click_cb(closest_ply)
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Hardware monitor — real-time CPU / GPU resource usage
+# ---------------------------------------------------------------------------
+
+class HardwareMonitor(tk.Canvas):
+    """Compact system resource monitor with animated bar charts.
+
+    2 columns × 3 rows: CPU usage, sys RAM, proc CPU | GPU usage, VRAM, temp.
+    Data sources: /proc/stat, /proc/meminfo, /proc/self/stat, nvidia-smi,
+    torch.cuda — zero new dependencies.
+
+    Data collection runs in a daemon thread so nvidia-smi never blocks the
+    Tk event loop.  Canvas items are created once then updated incrementally.
+    """
+
+    _BAR_H = 12
+    _ROW_H = 20
+    _PAD_T = 6
+    _PAD_B = 6
+    _PAD_L = 4
+    _PAD_R = 4
+    _LABEL_W = 88
+    _GAP_COL = 24
+
+    def __init__(self, parent, draughts_app=None, height=120):
+        super().__init__(parent, bg="#f5f5f5", highlightthickness=1,
+                         highlightbackground="#c8cdd5", height=height)
+        self._app = draughts_app
+        self._metrics: list[dict] = [
+            {"key": "cpu",  "current": 0.0, "target": 0.0, "fmt": "{:.0f}%",  "frac": 0.0,
+             "bar_bg": None, "bar_fill": None, "text": None, "label": None},
+            {"key": "ram",  "current": 0.0, "target": 0.0, "fmt": "{:.1f}G",  "frac": 0.0,
+             "bar_bg": None, "bar_fill": None, "text": None, "label": None},
+            {"key": "proc", "current": 0.0, "target": 0.0, "fmt": "{:.0f}%",  "frac": 0.0,
+             "bar_bg": None, "bar_fill": None, "text": None, "label": None},
+            {"key": "gpu",  "current": 0.0, "target": 0.0, "fmt": "{:.0f}%",  "frac": 0.0,
+             "bar_bg": None, "bar_fill": None, "text": None, "label": None},
+            {"key": "vram", "current": 0.0, "target": 0.0, "fmt": "{:.1f}G",  "frac": 0.0,
+             "bar_bg": None, "bar_fill": None, "text": None, "label": None},
+            {"key": "temp", "current": 0.0, "target": 0.0, "fmt": "{:.0f}°C", "frac": 0.0,
+             "bar_bg": None, "bar_fill": None, "text": None, "label": None},
+        ]
+        self._gpu_available = False
+        self._anim_id: Optional[str] = None
+        self._anim_start = 0.0
+        self._running = True
+        self._items_created = False
+        # Thread-safe: collector thread writes a fresh dict, main thread reads it.
+        self._pending_data: Optional[dict] = None
+        self._collect_lock = threading.Lock()
+
+        self.bind("<Configure>", lambda _e: self._redraw())
+        self.bind("<Destroy>", lambda _e: self._stop())
+
+        # Start background collector + main-thread pick-up loop
+        self._collector_thread = threading.Thread(target=self._collect_loop, daemon=True)
+        self._collector_thread.start()
+        self._apply_loop()
+
+    def _stop(self) -> None:
+        self._running = False
+        if self._anim_id:
+            self.after_cancel(self._anim_id)
+            self._anim_id = None
+
+    # -- background data collection (never touches Tk) --------------------
+
+    def _collect_loop(self) -> None:
+        """Run in daemon thread: sample /proc + nvidia-smi, post results."""
+        prev_cpu = None
+        prev_proc_cpu = None
+        while self._running:
+            try:
+                data = {}
+                # CPU
+                prev_cpu = self._sample_cpu(data, prev_cpu)
+                # RAM
+                self._sample_ram(data)
+                # Proc CPU
+                prev_proc_cpu = self._sample_proc_cpu(data, prev_proc_cpu)
+                # GPU
+                self._sample_gpu(data)
+                # Publish
+                self._pending_data = data
+            except Exception:
+                pass
+            time.sleep(1.0)
+
+    @staticmethod
+    def _sample_cpu(data: dict, prev) -> tuple:
+        try:
+            with open("/proc/stat") as f:
+                line = f.readline()
+            parts = line.split()
+            if parts[0] == "cpu":
+                ticks = [int(x) for x in parts[1:]]
+                idle, total = ticks[3], sum(ticks)
+                if prev is not None:
+                    p_idle, p_total = prev
+                    d_idle = idle - p_idle
+                    d_total = total - p_total
+                    if d_total > 0:
+                        data["cpu"] = (1.0 - d_idle / d_total) * 100.0
+                return (idle, total)
+        except Exception:
+            pass
+        return prev
+
+    @staticmethod
+    def _sample_ram(data: dict) -> None:
+        try:
+            total = available = 0
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        total = int(line.split()[1])
+                    elif line.startswith("MemAvailable:"):
+                        available = int(line.split()[1])
+                    if total and available:
+                        break
+            if total > 0:
+                used_gb = (total - available) / 1024.0 / 1024.0
+                total_gb = total / 1024.0 / 1024.0
+                data["ram"] = (used_gb, total_gb)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _sample_proc_cpu(data: dict, prev) -> tuple:
+        try:
+            with open("/proc/self/stat") as f:
+                stat = f.read().split()
+            ticks = sum(int(stat[i]) for i in [13, 14, 15, 16])
+            now = time.monotonic()
+            if prev is not None:
+                p_ticks, p_time = prev
+                d_ticks = ticks - p_ticks
+                d_time = now - p_time
+                nprocs = os.cpu_count() or 1
+                if d_time > 0:
+                    pct = (d_ticks / os.sysconf("SC_CLK_TCK")) / d_time / nprocs * 100.0
+                    data["proc"] = min(pct, 100.0 * nprocs)
+            return (ticks, now)
+        except Exception:
+            pass
+        return prev
+
+    @staticmethod
+    def _sample_gpu(data: dict) -> None:
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                parts = [x.strip() for x in result.stdout.strip().split(",")]
+                if len(parts) >= 4:
+                    data["gpu"] = float(parts[0])
+                    data["vram"] = (float(parts[1]) / 1024.0, float(parts[2]) / 1024.0)
+                    data["temp"] = float(parts[3])
+                    data["gpu_avail"] = True
+                    return
+        except Exception:
+            pass
+        # Fallback: torch.cuda
+        try:
+            import torch
+            if torch.cuda.is_available():
+                alloc = torch.cuda.memory_allocated(0) / 1024.0**3
+                data["vram"] = (alloc, None)
+                data["gpu"] = 0.0
+                data["temp"] = 0.0
+                data["gpu_avail"] = True
+                return
+        except Exception:
+            pass
+        data["gpu_avail"] = False
+
+    # -- main-thread apply loop -------------------------------------------
+
+    def _apply_loop(self) -> None:
+        """Pick up data from the collector thread and update targets."""
+        if not self._running:
+            return
+        data = self._pending_data
+        if data is not None:
+            self._pending_data = None
+            # Apply CPU
+            if "cpu" in data:
+                self._set_target("cpu", data["cpu"])
+            # Apply RAM
+            if "ram" in data:
+                used_gb, total_gb = data["ram"]
+                self._set_target("ram", used_gb)
+                m = next(x for x in self._metrics if x["key"] == "ram")
+                m["fmt"] = f"{{:.1f}}/{total_gb:.1f}G"
+                m["frac"] = used_gb / total_gb if total_gb > 0 else 0.0
+            # Apply proc CPU
+            if "proc" in data:
+                self._set_target("proc", data["proc"])
+            # Apply GPU
+            gpu_avail = data.get("gpu_avail", False)
+            self._gpu_available = gpu_avail
+            if gpu_avail:
+                if "gpu" in data:
+                    self._set_target("gpu", data["gpu"])
+                if "vram" in data:
+                    vram_gb, vram_total = data["vram"]
+                    self._set_target("vram", vram_gb)
+                    m = next(x for x in self._metrics if x["key"] == "vram")
+                    if vram_total is not None:
+                        m["fmt"] = f"{{:.1f}}/{vram_total:.1f}G"
+                        m["frac"] = vram_gb / vram_total if vram_total > 0 else 0.0
+                    else:
+                        m["fmt"] = "{:.1f}G"
+                        m["frac"] = 0.0
+                if "temp" in data:
+                    self._set_target("temp", data["temp"])
+                    m = next(x for x in self._metrics if x["key"] == "temp")
+                    m["frac"] = data["temp"] / 100.0
+        self.after(1000, self._apply_loop)
+
+    def _set_target(self, key: str, value: float) -> None:
+        for m in self._metrics:
+            if m["key"] == key:
+                m["target"] = value
+                break
+        self._start_animation()
+
+    # -- animation (main thread) ------------------------------------------
+
+    def _start_animation(self) -> None:
+        if self._anim_id is not None:
+            return
+        self._anim_start = time.monotonic()
+        self._animate()
+
+    def _animate(self) -> None:
+        self._anim_id = None
+        now = time.monotonic()
+        t = min((now - self._anim_start) / 0.25, 1.0)
+        eased = 1.0 - (1.0 - t) * (1.0 - t)  # ease-out quad
+        dirty = False
+        for m in self._metrics:
+            cur = m["current"]
+            tgt = m["target"]
+            if abs(cur - tgt) < 0.05:
+                m["current"] = tgt
+            else:
+                m["current"] = cur + (tgt - cur) * eased
+                dirty = True
+        self._redraw()
+        if dirty and t < 1.0:
+            self._anim_id = self.after(50, self._animate)
+
+    # -- drawing (incremental after first paint) --------------------------
+
+    def _font(self, size=9, bold=False):
+        family = getattr(self._app, "_cjk_family", None) if self._app else None
+        if family is None:
+            return ("TkDefaultFont", size, "bold") if bold else ("TkDefaultFont", size)
+        return (family, size, "bold") if bold else (family, size)
+
+    def _redraw(self) -> None:
+        w = self.winfo_width()
+        h = self.winfo_height()
+        if w < 20 or h < 20:
+            return
+        tr = self._app._tr if self._app else _tr_static
+
+        mid_x = w / 2 + self._GAP_COL / 2
+        bar_max_w = mid_x - self._LABEL_W - self._GAP_COL - self._PAD_L - 4
+
+        if not self._items_created:
+            self._create_items(w, h, mid_x, bar_max_w, tr)
+            self._items_created = True
+        else:
+            # Update static geometry-dependent items
+            self.coords(self._divider, mid_x - self._GAP_COL / 2, self._PAD_T,
+                        mid_x - self._GAP_COL / 2, h - self._PAD_B)
+            self.coords(self._bg_rect, 0, 0, w, h)
+
+        # Update per-metric items
+        for i, m in enumerate(self._metrics):
+            col = 0 if i < 3 else 1
+            row = i if i < 3 else i - 3
+            y_mid = self._PAD_T + row * self._ROW_H + self._ROW_H / 2
+            y_bar = y_mid - self._BAR_H / 2
+
+            label_x = self._PAD_L if col == 0 else mid_x + self._GAP_COL / 2
+            bar_x0 = label_x + self._LABEL_W
+            bar_x1 = bar_x0 + bar_max_w
+
+            # Update bar backgrounds and positions
+            if m["bar_bg"] is not None:
+                self.coords(m["bar_bg"], bar_x0, y_bar, bar_x1, y_bar + self._BAR_H)
+                self.itemconfigure(m["bar_bg"], fill="#e8e8e8", outline="#ddd")
+
+            # Bar fill — percentage-based metrics derive frac from current;
+            # RAM/VRAM/temp have pre-computed frac from _apply_loop.
+            if m["key"] in ("ram", "vram", "temp"):
+                frac = m["frac"]
+            else:
+                frac = m["current"] / 100.0
+            frac = max(0.0, min(1.0, frac))
+            fill_w = frac * bar_max_w
+            if m["bar_fill"] is not None:
+                if fill_w > 0.5:
+                    self.coords(m["bar_fill"], bar_x0, y_bar + 1,
+                                bar_x0 + fill_w, y_bar + self._BAR_H - 1)
+                    self.itemconfigure(m["bar_fill"], fill=self._bar_color(frac),
+                                       outline="")
+                else:
+                    self.coords(m["bar_fill"], 0, 0, 0, 0)  # hide
+
+            # Value text
+            if m["key"] in ("gpu", "vram", "temp") and not self._gpu_available:
+                val_str = tr("mon_no_gpu")
+            else:
+                val_str = m["fmt"].format(m["current"])
+            if m["text"] is not None:
+                self.coords(m["text"], bar_x1 + 8, y_mid)
+                self.itemconfigure(m["text"], text=val_str)
+
+    def _create_items(self, w: int, h: int, mid_x: float, bar_max_w: float, tr) -> None:
+        """Create all canvas items once; _redraw() updates them in-place."""
+        self._bg_rect = self.create_rectangle(0, 0, w, h, fill="#f5f5f5", outline="",
+                                               tags=("bg",))
+        self._divider = self.create_line(
+            mid_x - self._GAP_COL / 2, self._PAD_T,
+            mid_x - self._GAP_COL / 2, h - self._PAD_B,
+            fill="#ddd", width=1, tags=("divider",),
+        )
+
+        for i, m in enumerate(self._metrics):
+            col = 0 if i < 3 else 1
+            row = i if i < 3 else i - 3
+            y_mid = self._PAD_T + row * self._ROW_H + self._ROW_H / 2
+            y_bar = y_mid - self._BAR_H / 2
+
+            label_x = self._PAD_L if col == 0 else mid_x + self._GAP_COL / 2
+            bar_x0 = label_x + self._LABEL_W
+            bar_x1 = bar_x0 + bar_max_w
+
+            tag = f"m{i}"
+            # Label
+            key_tr = f"mon_{m['key']}"
+            m["label"] = self.create_text(label_x, y_mid, text=tr(key_tr),
+                                          font=self._font(8), fill="#444",
+                                          anchor="w", tags=(tag,))
+            # Bar background
+            m["bar_bg"] = self.create_rectangle(bar_x0, y_bar, bar_x1, y_bar + self._BAR_H,
+                                                fill="#e8e8e8", outline="#ddd",
+                                                tags=(tag,))
+            # Bar fill (initially hidden)
+            m["bar_fill"] = self.create_rectangle(0, 0, 0, 0,
+                                                  fill="#27ae60", outline="",
+                                                  tags=(tag,))
+            # Value text
+            m["text"] = self.create_text(bar_x1 + 8, y_mid, text="",
+                                         font=self._font(9, bold=True),
+                                         fill="#333", anchor="w", tags=(tag,))
+
+    @staticmethod
+    def _bar_color(frac: float) -> str:
+        """Green → yellow → orange → red gradient."""
+        frac = max(0.0, min(1.0, frac))
+        stops = [(0.0, 0x27, 0xae, 0x60),
+                 (0.5, 0xf0, 0xc0, 0x40),
+                 (0.75, 0xe6, 0x7e, 0x22),
+                 (1.0, 0xc0, 0x39, 0x2b)]
+        for i in range(len(stops) - 1):
+            t0, r0, g0, b0 = stops[i]
+            t1, r1, g1, b1 = stops[i + 1]
+            if t0 <= frac <= t1:
+                progress = (frac - t0) / (t1 - t0) if t1 > t0 else 0.0
+                r = int(r0 + (r1 - r0) * progress)
+                g = int(g0 + (g1 - g0) * progress)
+                b = int(b0 + (b1 - b0) * progress)
+                return f"#{r:02x}{g:02x}{b:02x}"
+        return "#c0392b"
 
 
 class GameController:
@@ -1886,7 +2303,7 @@ class DraughtsApp(tk.Tk):
         self._side_moves: dict[int, list[Move]] = {}  # per-side stored move lists
         self._configure_fonts()
         self.title(self._tr("window_title"))
-        self.minsize(1360, 760)
+        self.minsize(1520, 780)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.status_vars = {
@@ -2034,19 +2451,29 @@ class DraughtsApp(tk.Tk):
 
     def _build_layout(self) -> None:
         tr = self._tr  # local alias for brevity
-        self.columnconfigure(0, weight=0)  # notation
+        self.columnconfigure(0, weight=0)  # notation + log (left panel)
         self.columnconfigure(1, weight=0)  # board + analysis
         self.columnconfigure(2, weight=0)  # (unused — spanned by col 1)
         self.columnconfigure(3, weight=1)  # sidebar
-        self.rowconfigure(0, weight=1)   # notation panel stretches
-        self.rowconfigure(1, weight=0)   # value curve — fixed height
+        self.rowconfigure(0, weight=1)   # board
+        self.rowconfigure(1, weight=1)   # search tree
 
-        # ---- Notation panel (left) ----
-        notation_frame = ttk.LabelFrame(self, text=tr("notation_frame"), padding=(8, 8, 8, 8))
-        notation_frame.grid(row=0, column=0, sticky="nsew", padx=(12, 0), pady=(12, 6))
+        # ---- Left panel (col 0, spans both rows) ----
+        # Using a sub-frame allows notation and log to split 50/50
+        # regardless of how the board/search-tree rows divvy up height.
+        left_panel = ttk.Frame(self)
+        left_panel.grid(row=0, column=0, rowspan=2, sticky="nsew",
+                        padx=(12, 0), pady=(12, 12))
+        left_panel.columnconfigure(0, weight=1)
+        left_panel.rowconfigure(0, weight=1)  # notation (50%)
+        left_panel.rowconfigure(1, weight=1)  # log (50%)
+
+        # Notation (upper half of left panel)
+        notation_frame = ttk.LabelFrame(left_panel, text=tr("notation_frame"), padding=(8, 8, 8, 8))
+        notation_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 6))
         notation_frame.columnconfigure(0, weight=1)
         notation_frame.rowconfigure(0, weight=1)
-        self.notation_list = tk.Listbox(notation_frame, width=26, height=28)
+        self.notation_list = tk.Listbox(notation_frame, width=56)
         self.notation_list.grid(row=0, column=0, sticky="nsew")
         notation_scrollbar = ttk.Scrollbar(
             notation_frame,
@@ -2057,17 +2484,23 @@ class DraughtsApp(tk.Tk):
         self.notation_list.configure(yscrollcommand=notation_scrollbar.set)
         self._i18n_widgets.append(("labelframe", notation_frame, "notation_frame"))
 
-        # ---- Value curve (below notation) ----
-        curve_frame = ttk.LabelFrame(self, text=tr("curve_frame"), padding=(4, 4, 4, 4))
-        curve_frame.grid(row=1, column=0, sticky="nsew", padx=(12, 0), pady=(0, 12))
-        curve_frame.columnconfigure(0, weight=1)
-        self.curve = ValueCurve(
-            curve_frame,
-            on_point_click=self._on_curve_point_click,
-            app=self,
-        )
-        self.curve.pack(fill="x", expand=False)
-        self._i18n_widgets.append(("labelframe", curve_frame, "curve_frame"))
+        # Log (lower half of left panel)
+        log_frame = ttk.LabelFrame(left_panel, text=tr("section_log"), padding=(4, 4, 4, 4))
+        log_frame.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+        self.log_text = tk.Text(log_frame, width=56, wrap="word", state="disabled")
+        self.log_text.grid(row=0, column=0, sticky="nsew")
+        log_scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
+        log_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.log_text.configure(yscrollcommand=log_scrollbar.set)
+        self.log_text.tag_configure("info", foreground="#1f4e79")
+        self.log_text.tag_configure("action", foreground="#1b6e3c")
+        self.log_text.tag_configure("warn", foreground="#9a5b00")
+        self.log_text.tag_configure("error", foreground="#b00020")
+        self.log_text.tag_configure("success", foreground="#275d38")
+        self._i18n_widgets.append(("labelframe", log_frame, "section_log"))
+
 
         # ---- Board column: eval bar + board, then analysis below ----
         board_column = ttk.Frame(self)
@@ -2090,35 +2523,55 @@ class DraughtsApp(tk.Tk):
         self.search_stats_frame.columnconfigure(0, weight=1)
         self.search_stats_frame.columnconfigure(1, weight=1)
         self.search_stats_frame.columnconfigure(2, weight=1)
+        self.search_stats_frame.columnconfigure(3, weight=1)
         self.search_stats_vars = {
             "eval": tk.StringVar(value=tr("analysis_na")),
             "sims": tk.StringVar(value=tr("analysis_na")),
             "best": tk.StringVar(value=tr("analysis_na")),
+            "delta": tk.StringVar(value=tr("analysis_na")),
         }
-        # Three columns of analysis info
+        # Row 0: column headers
         lbl_val = ttk.Label(self.search_stats_frame, text=tr("analysis_value"))
         lbl_val.grid(row=0, column=0, sticky="w")
         self._i18n_widgets.append(("label", lbl_val, "analysis_value"))
-        ttk.Label(self.search_stats_frame, textvariable=self.search_stats_vars["eval"]).grid(
-            row=1, column=0, sticky="w", padx=(0, 20))
         lbl_srch = ttk.Label(self.search_stats_frame, text=tr("analysis_search"))
         lbl_srch.grid(row=0, column=1, sticky="w")
         self._i18n_widgets.append(("label", lbl_srch, "analysis_search"))
-        ttk.Label(self.search_stats_frame, textvariable=self.search_stats_vars["sims"]).grid(
-            row=1, column=1, sticky="w", padx=(0, 20))
         lbl_best = ttk.Label(self.search_stats_frame, text=tr("analysis_best"))
         lbl_best.grid(row=0, column=2, sticky="w")
         self._i18n_widgets.append(("label", lbl_best, "analysis_best"))
+        lbl_delta = ttk.Label(self.search_stats_frame, text=tr("analysis_delta"))
+        lbl_delta.grid(row=0, column=3, sticky="w")
+        self._i18n_widgets.append(("label", lbl_delta, "analysis_delta"))
+        # Row 1: values
+        ttk.Label(self.search_stats_frame, textvariable=self.search_stats_vars["eval"]).grid(
+            row=1, column=0, sticky="w", padx=(0, 12))
+        ttk.Label(self.search_stats_frame, textvariable=self.search_stats_vars["sims"]).grid(
+            row=1, column=1, sticky="w", padx=(0, 12))
         ttk.Label(self.search_stats_frame, textvariable=self.search_stats_vars["best"]).grid(
-            row=1, column=2, sticky="w")
+            row=1, column=2, sticky="w", padx=(0, 12))
+        ttk.Label(self.search_stats_frame, textvariable=self.search_stats_vars["delta"]).grid(
+            row=1, column=3, sticky="w")
         self._i18n_widgets.append(("labelframe", self.search_stats_frame, "engine_frame"))
+
+        # ---- System monitor (below board, row 1) ----
+        mon_frame = ttk.LabelFrame(self, text=tr("mon_frame"), padding=(4, 4, 4, 4))
+        mon_frame.grid(row=1, column=1, columnspan=2, sticky="new",
+                       padx=8, pady=(0, 12))
+        mon_frame.columnconfigure(0, weight=1)
+        mon_frame.rowconfigure(0, weight=1)
+        self.hw_monitor = HardwareMonitor(mon_frame, draughts_app=self, height=120)
+        self.hw_monitor.pack(fill="both", expand=True)
+        self._i18n_widgets.append(("labelframe", mon_frame, "mon_frame"))
+
+
 
         # ---- Sidebar (right) ----
         sidebar = ttk.Frame(self, padding=(0, 12, 12, 12))
-        sidebar.grid(row=0, column=3, sticky="nsew")
+        sidebar.grid(row=0, column=3, rowspan=2, sticky="nsew")
         sidebar.columnconfigure(0, weight=1)
-        sidebar.rowconfigure(3, weight=3)  # move tree
-        sidebar.rowconfigure(5, weight=2)  # log
+        sidebar.rowconfigure(3, weight=2)  # move tree
+        sidebar.rowconfigure(4, weight=1)  # curve
 
         # Status
         status_frame = ttk.LabelFrame(sidebar, text=tr("status_frame"))
@@ -2169,10 +2622,8 @@ class DraughtsApp(tk.Tk):
         # Move list — two independent columns, one per side.
         # Each column retains its side's last legal moves and analysis,
         # so probabilities never leak across sides.
-        self._move_list_label = ttk.Label(sidebar, text=tr("section_moves"))
-        self._move_list_label.grid(row=3, column=0, sticky="w")
         moves_frame = ttk.Frame(sidebar)
-        moves_frame.grid(row=4, column=0, sticky="nsew")
+        moves_frame.grid(row=3, column=0, sticky="nsew")
         moves_frame.columnconfigure(0, weight=1)
         moves_frame.columnconfigure(1, weight=1)
         moves_frame.rowconfigure(0, weight=1)
@@ -2211,27 +2662,13 @@ class DraughtsApp(tk.Tk):
             ("labelframe", self._white_move_frame, "side_white"),
         ])
 
-        # Log
-        self._log_label = ttk.Label(sidebar, text=tr("section_log"))
-        self._log_label.grid(row=5, column=0, sticky="w", pady=(10, 0))
-        log_frame = ttk.Frame(sidebar)
-        log_frame.grid(row=6, column=0, sticky="nsew")
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
-        self.log_text = tk.Text(log_frame, height=12, wrap="word", state="disabled")
-        self.log_text.grid(row=0, column=0, sticky="nsew")
-        log_scrollbar = ttk.Scrollbar(
-            log_frame,
-            orient="vertical",
-            command=self.log_text.yview,
-        )
-        log_scrollbar.grid(row=0, column=1, sticky="ns")
-        self.log_text.configure(yscrollcommand=log_scrollbar.set)
-        self.log_text.tag_configure("info", foreground="#1f4e79")
-        self.log_text.tag_configure("action", foreground="#1b6e3c")
-        self.log_text.tag_configure("warn", foreground="#9a5b00")
-        self.log_text.tag_configure("error", foreground="#b00020")
-        self.log_text.tag_configure("success", foreground="#275d38")
+        # Value curve (in sidebar, below move list)
+        curve_frame = ttk.LabelFrame(sidebar, text=tr("curve_frame"), padding=(4, 4, 4, 4))
+        curve_frame.grid(row=4, column=0, sticky="nsew", pady=(10, 0))
+        curve_frame.columnconfigure(0, weight=1)
+        self.curve = ValueCurve(curve_frame, on_point_click=self._on_curve_point_click, app=self)
+        self.curve.pack(fill="x", expand=False)
+        self._i18n_widgets.append(("labelframe", curve_frame, "curve_frame"))
 
         # ---- Language toggle (in sidebar toolbar) ----
         self._lang_button = ttk.Button(toolbar, text=tr("lang_toggle"), command=self._on_toggle_language)
@@ -2256,24 +2693,30 @@ class DraughtsApp(tk.Tk):
         )
 
     def _make_move_treeview(self, parent: ttk.Frame) -> ttk.Treeview:
-        """Create a standard move-list treeview with the usual 4 columns."""
+        """Create a standard move-list treeview with 6 columns."""
         tv = ttk.Treeview(
             parent,
-            columns=("action", "prob", "path", "captures"),
+            columns=("action", "prob", "qval", "visits", "path", "captures"),
             show="headings",
             height=8,
             selectmode="browse",
         )
         tv.heading("action", text=self._tr("tree_action"))
         tv.heading("prob", text=self._tr("tree_prob"))
+        tv.heading("qval", text=self._tr("tree_qval"))
+        tv.heading("visits", text=self._tr("tree_visits"))
         tv.heading("path", text=self._tr("tree_path"))
         tv.heading("captures", text=self._tr("tree_captures"))
-        tv.column("action", width=42, stretch=False, anchor="center")
-        tv.column("prob", width=62, stretch=False, anchor="center")
-        tv.column("path", width=130, stretch=True)
-        tv.column("captures", width=90, stretch=True)
+        tv.column("action", width=35, stretch=False, anchor="center")
+        tv.column("prob", width=54, stretch=False, anchor="center")
+        tv.column("qval", width=46, stretch=False, anchor="center")
+        tv.column("visits", width=40, stretch=False, anchor="center")
+        tv.column("path", width=70, stretch=True)
+        tv.column("captures", width=55, stretch=True)
         tv.tag_configure("candidate", background="#e8f4ea")
         tv.tag_configure("top_pick", background="#fff3cd")
+        tv.tag_configure("q_pos", foreground="#1a7a2e")
+        tv.tag_configure("q_neg", foreground="#c0392b")
         return tv
 
     def _highlight_active_side(self, side: int) -> None:
@@ -2347,6 +2790,14 @@ class DraughtsApp(tk.Tk):
         else:
             self.search_stats_vars["best"].set(self._tr("analysis_na"))
 
+        # Search delta: network value → MCTS-corrected value
+        if analysis.search_value is not None and analysis.value is not None:
+            self.search_stats_vars["delta"].set(
+                self._tr("analysis_delta_fmt",
+                         netv=analysis.value, searchv=analysis.search_value))
+        else:
+            self.search_stats_vars["delta"].set(self._tr("analysis_na"))
+
     def update_status(self, observation: Dict[str, object], last_move: Optional[Move]) -> None:
         self.status_vars["mode"].set(self.controller.mode_label())
         self.status_vars["side"].set(self._tr(f"side_{observation['side_to_move_name']}"))
@@ -2376,8 +2827,15 @@ class DraughtsApp(tk.Tk):
         tree.tag_configure("top_pick", background="#fff3cd")
 
         probs: Optional[dict[int, float]] = None
-        if analysis is not None and analysis.policy_probs is not None:
-            probs = analysis.policy_probs
+        visits: Optional[dict[int, int]] = None
+        qvals: Optional[dict[int, float]] = None
+        if analysis is not None:
+            if analysis.policy_probs is not None:
+                probs = analysis.policy_probs
+            if analysis.visit_counts is not None:
+                visits = analysis.visit_counts
+            if analysis.q_values is not None:
+                qvals = analysis.q_values
 
         candidate_ids = {move.action_id for move in candidate_moves}
 
@@ -2403,6 +2861,22 @@ class DraughtsApp(tk.Tk):
                 else:
                     prob_str = f"{pct:.3f}%"
 
+            # Q-value string
+            q_str = ""
+            if qvals and aid in qvals:
+                q = qvals[aid]
+                q_str = f"{q:+.2f}"
+                tags.append("q_pos" if q >= 0 else "q_neg")
+
+            # Visit count string
+            visit_str = ""
+            if visits and aid in visits:
+                vc = visits[aid]
+                if vc >= 1000:
+                    visit_str = f"{vc/1000:.0f}k"
+                else:
+                    visit_str = str(vc)
+
             tree.insert(
                 "",
                 "end",
@@ -2410,6 +2884,8 @@ class DraughtsApp(tk.Tk):
                 values=(
                     aid,
                     prob_str,
+                    q_str,
+                    visit_str,
                     " -> ".join(str(square) for square in move.path),
                     ", ".join(str(square) for square in move.captures) or "-",
                 ),
@@ -2655,6 +3131,8 @@ class DraughtsApp(tk.Tk):
             try:
                 tv.heading("action", text=self._tr("tree_action"))
                 tv.heading("prob", text=self._tr("tree_prob"))
+                tv.heading("qval", text=self._tr("tree_qval"))
+                tv.heading("visits", text=self._tr("tree_visits"))
                 tv.heading("path", text=self._tr("tree_path"))
                 tv.heading("captures", text=self._tr("tree_captures"))
             except Exception:
@@ -2664,8 +3142,7 @@ class DraughtsApp(tk.Tk):
         self._highlight_active_side(self.controller.current_side())
 
         # Section labels
-        self._move_list_label.configure(text=self._tr("section_moves"))
-        self._log_label.configure(text=self._tr("section_log"))
+
 
         # Analysis panel placeholders
         self.search_stats_vars["eval"].set(self._tr("analysis_na"))
