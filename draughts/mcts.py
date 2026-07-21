@@ -95,6 +95,7 @@ class MCTSResult:
     root_value: float
     policy_probs: list[float]
     action_ids: list[int]
+    network_value: float = 0.0
 
     def selected_action(self, temperature: float = 0.0) -> int:
         """Pick an action from the visit-count distribution.
@@ -197,6 +198,7 @@ def mcts_search(
         root_value=root.q(),
         policy_probs=policy_probs,
         action_ids=action_ids,
+        network_value=float(_root_value),
     )
 
 

@@ -180,6 +180,8 @@ class SupervisedAgent(Agent):
         state_dict = checkpoint.get("model_state_dict", checkpoint)
         self.model.load_state_dict(state_dict)
         self.model.eval()
+        self.last_policy_logits: Optional[List[float]] = None
+        self.last_value: Optional[float] = None
 
     def select_action(
         self,
@@ -206,6 +208,8 @@ class SupervisedAgent(Agent):
             )
             move_mask = torch.ones((1, len(legal_actions)), dtype=torch.float32, device=self.device_obj)
             output = self.model(observation_tensor, move_tensor, move_mask)
+            self.last_policy_logits = output["policy_logits"][0].tolist()
+            self.last_value = float(output["value"][0].item())
             selected_index = int(output["policy_logits"][0].argmax().item())
         return legal_actions[selected_index].action_id
 
