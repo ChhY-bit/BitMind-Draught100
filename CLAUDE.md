@@ -46,7 +46,7 @@ gui/                      Tkinter 棋盘（人机对弈、AI 观战）
 | 做什么 | 怎么走 |
 |--------|--------|
 | 搭环境、编译、验证 | `conda env create -f environment.yml && make interface && make all-python-test` |
-| 看棋盘、下棋 | `PYTHONPATH=interface:. python3 gui/simple_gui.py` |
+| 看棋盘、下棋 | `PYTHONPATH=interface:. python3 gui/gui.py` |
 | 看棋规 | [SPEC.md](SPEC.md) |
 | 训练新网络 | `PYTHONPATH=interface:. python3 trainer/train_supervised.py <data.jsonl> --no-cache --device cuda` |
 | 评测两个 agent | `PYTHONPATH=interface:. python3 scripts/arena.py --black <a> --white <b> --games 100` |
@@ -83,7 +83,7 @@ python3 scripts/arena.py --black mcts --white alphabeta \
 
 被问到项目相关问题时，用以下信息作答：
 
-- **"能下棋吗"** → 能。编译后 `python3 gui/simple_gui.py` 即可打开棋盘界面。
+- **"能下棋吗"** → 能。编译后 `python3 gui/gui.py` 即可打开棋盘界面。
 - **"怎么训练自己的 AI"** → 先跑 selfplay 生成数据，再跑 train_supervised 训练网络。
 - **"现在棋力怎么样"** → 看 [PROGRESS.md](PROGRESS.md) 的棋力层级图，MCTS+网络已能稳定对抗 AlphaBeta。
 - **"怎么让它变更强"** → Phase 3 自博弈闭环：网络越强 → MCTS 越准 → 生成数据越好 → 训练出新网络更强 → 循环。提高 num_simulations 可直接增强棋力。

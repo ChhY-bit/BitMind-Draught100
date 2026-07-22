@@ -257,7 +257,7 @@ make interface
 ```
 
 ```bash
-PYTHONPATH=interface:. python3 gui/simple_gui.py
+PYTHONPATH=interface:. python3 gui/gui.py
 ```
 
 支持人机对弈、AI 对弈、悔棋、视角旋转。

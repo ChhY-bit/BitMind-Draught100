@@ -1,6 +1,6 @@
 # GUI 参考手册
 
-`gui/simple_gui.py` 是 100 格国际跳棋的 Tkinter 图形界面。它通过 `interface.DraughtsEnv` 调用 C 引擎，不在 GUI 中重实现棋规。
+`gui/gui.py` 是 100 格国际跳棋的 Tkinter 图形界面。它通过 `interface.DraughtsEnv` 调用 C 引擎，不在 GUI 中重实现棋规。
 
 ## 快速开始
 
@@ -8,7 +8,7 @@
 
 ```bash
 make interface
-PYTHONPATH=interface:. python3 gui/simple_gui.py
+PYTHONPATH=interface:. python3 gui/gui.py
 ```
 
 启动后弹出"新建对局"窗口，选择黑白双方决策源即可开始。
@@ -152,14 +152,36 @@ MCTS AI 选择 checkpoint 后会弹出可选的 YAML 配置文件选择框（默
 ## 架构
 
 ```
-gui/simple_gui.py
-    │
-    ├── interface/DraughtsEnv              (C 引擎封装)
-    ├── draughts.env.StandardDraughtsEnv   (MCTS 搜索用)
-    ├── draughts.agents.*                  (MCTSAgent, SupervisedAgent, AlphaBetaAgent)
-    ├── draughts.env.encode_observation    (局面编码)
-    ├── draughts.mcts.MCTSResult           (搜索分析数据)
-    └── draughts.move_encoding             (坐标转换)
+gui/
+├── __init__.py
+├── gui.py                     # 入口（设置 sys.path 后委托给 app.main()）
+├── app.py                     # DraughtsApp 主窗口 + 布局 + 回调编排
+├── game_controller.py         # GameController 对局状态机
+├── agents_local.py            # Human / Random / AlphaBeta / Supervised / MCTS
+├── protocol.py                # PlayerAnalysis（数据传递对象）
+├── i18n.py                    # 翻译表 _TRANSLATIONS + _tr_static()
+├── utils.py                   # 常量 + 棋盘/走法辅助函数
+├── fonts.py                   # CJK 字体发现与注册（多后端回退）
+├── widgets/
+│   ├── __init__.py
+│   ├── board.py               # BoardView（棋盘绘制、点击交互）
+│   ├── eval_bar.py            # EvalBar（估值竖条）
+│   ├── value_curve.py         # ValueCurve（估值曲线 + 点击回溯）
+│   └── hardware_monitor.py    # HardwareMonitor（CPU/GPU 实时图表）
+└── README-gui.md
+```
+
+**依赖方向（自上而下，无循环）：**
+```
+i18n  fonts  utils  protocol       ← 零外部依赖
+  ↓      ↓      ↓      ↓
+widgets/  agents_local             ← 纯展示 / AI 代理
+    ↓         ↓
+game_controller                    ← 对局状态机
+    ↓         ↓
+  app.py                           ← 主窗口编排
+    ↓
+gui.py                             ← 入口
 ```
 
 GUI 不实现棋规——所有动作通过 `action_id → env.step(action_id)` 交给 C 引擎执行。悔棋使用动作历史重放实现。
@@ -172,6 +194,18 @@ Agent.select_action()
   → GameController.last_player_analysis()
   → DraughtsApp.update_eval_bar() / update_move_list() / update_search_stats()
 ```
+
+### 模块职责
+
+| 模块 | 职责 | 设计要点 |
+|------|------|---------|
+| `protocol.py` | `PlayerAnalysis` 数据结构 | 纯数据类，零依赖。本地 AI 和未来云端 AI 共用同一数据结构 |
+| `agents_local.py` | 5 种 Player + `GuiEnvAdapter` | 统一的 `choose_move()` 接口。云端正交替换：新增 `agents_remote.py` 实现相同接口即可 |
+| `widgets/` | 4 个独立视图组件 | 只接收数据并渲染，不关心数据来自本地还是云端 |
+| `game_controller.py` | 对局状态机 | 通过 duck-typing 调用 Player，不依赖具体 Agent 实现 |
+| `app.py` | 主窗口布局 + 回调 | 粘合各模块，处理用户交互和语言切换 |
+| `fonts.py` | CJK 字体管理 | 独立模块，被 `app.py` 在启动时调用一次 |
+| `i18n.py` | 翻译字典 | 纯数据，所有 UI 字符串的单一来源 |
 
 ## 中文字体（Linux）
 

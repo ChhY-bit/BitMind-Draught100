@@ -38,7 +38,7 @@
 | `scripts/selfplay.py` | 对局数据生成，MCTS agent 直接产出软标签 |
 | `scripts/search_improve.py` | AlphaBeta 对已有数据重新打分 |
 | `scripts/arena.py` | 批量对战评测 |
-| `gui/simple_gui.py` | Tkinter 棋盘界面，人机/机机对弈 |
+| `gui/gui.py` | Tkinter 棋盘界面，人机/机机对弈 |
 
 ## 智能体阵容
 
