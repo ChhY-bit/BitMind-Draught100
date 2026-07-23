@@ -433,8 +433,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--mcts-config",
-        default=None,
-        help="YAML file for MCTSAgent parameters.",
+        default="draughts/config/mcts_selfplay.yaml",
+        help="YAML file for MCTSAgent parameters (default: mcts_selfplay.yaml for exploration).",
     )
     parser.add_argument(
         "--append",
@@ -488,6 +488,7 @@ def merge_selfplay_args(cli_args: argparse.Namespace) -> argparse.Namespace:
         "alphabeta_depth_white": cli_args.alphabeta_depth_white,
         "black_checkpoint": cli_args.black_checkpoint,
         "white_checkpoint": cli_args.white_checkpoint,
+        "mcts_config": cli_args.mcts_config,
         "device": cli_args.device,
         "append": cli_args.append,
         "auto_output_name": cli_args.auto_output_name,

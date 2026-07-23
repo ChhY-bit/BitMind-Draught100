@@ -77,11 +77,21 @@ Phase 3 路线:  selfplay(MCTS) → train                            （一步�
 
 MCTS 自博弈时，搜索返回的 visit count 分布自动写入 JSONL 的 `policy_target_probs` 字段，训练器自动识别并切换为软交叉熵损失。
 
+## 网络版本
+
+| 版本 | 参数 | 状态 |
+|------|------|------|
+| v1 | ~1.8M（conv=64, board=256, hidden=128） | 已退役（round1–7） |
+| v2 | ~15M（conv=256, board=512, hidden=256） | 当前使用 |
+| 配置文件 | `draughts/config/model.yaml` | — |
+
+v2 推荐训练数据量 **3M–5M 样本**。checkpoint 内保存 `model_config`，不同版本可同台对战，旧 checkpoint 无需重新训练即可在 GUI/arena 中加载。
+
 ## 已训练网络
 
 | 文件 | 来源 | policy accuracy | value MAE |
 |------|------|-----------------|-----------|
-| `trainer/checkpoints/candidate_move_net_best.pt` | Phase 1 蒸馏（~35,000 样本） | 75% (val) | 0.232 (val) |
+| `trainer/checkpoints/candidate_move_net_best.pt` | Phase 1 蒸馏（~35,000 样本, v1） | 75% (val) | 0.232 (val) |
 
 ## 已知局限
 
@@ -90,3 +100,4 @@ MCTS 自博弈时，搜索返回的 visit count 分布自动写入 JSONL 的 `po
 - `env.clone()` 仍有优化空间（move/undo 替代 clone 方案待实现）
 - 走法编码仍在 Python 层，C 层向量化可进一步提升训练和推理速度
 - 当前仅支持单 GPU 训练
+- v2 网络 15M 参数，单卡训练 GPU 显存需 ≥4 GB

@@ -126,7 +126,8 @@ loader = DataLoader(dataset, batch_size=32, collate_fn=collate_batch)
 |---|---|---|
 | `model.yaml` | `model.py` | 网络结构参数 |
 | `alphabeta.yaml` | `agents.py` | AlphaBeta 搜索深度与评估权重 |
-| `mcts.yaml` | `mcts.py` | MCTS 搜索超参数（sims, c_puct, dirichlet 等） |
+| `mcts.yaml` | `mcts.py` | MCTS 搜索超参数 — 评测/实战/GUI（确定性，无噪声） |
+| `mcts_selfplay.yaml` | `mcts.py` | MCTS 搜索超参数 — 自博弈（开启探索，增加多样性） |
 
 ## 测试
 

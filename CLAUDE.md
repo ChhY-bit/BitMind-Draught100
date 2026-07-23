@@ -53,7 +53,7 @@ gui/                      Tkinter 棋盘（人机对弈、AI 观战）
 | 生成训练数据 | `PYTHONPATH=interface:. python3 scripts/selfplay.py --black <a> --white <b> --output data.jsonl` |
 | 指定 GPU 序号 | `--device cuda:0`（GPU 0）、`--device cuda:1`（GPU 1），或 `CUDA_VISIBLE_DEVICES=1 ... --device cuda` |
 | 基座网络在哪 | `trainer/checkpoints/candidate_move_net_best.pt` |
-| MCTS 参数在哪 | `draughts/config/mcts.yaml` |
+| MCTS 参数在哪 | `draughts/config/mcts_selfplay.yaml`（自博弈）和 `mcts.yaml`（评测/实战） |
 | 当前网络棋力 | 见 [PROGRESS.md](PROGRESS.md) 的棋力层级图 |
 
 ## 常用命令速查
@@ -69,7 +69,7 @@ PYTHONPATH=interface:.
 python3 scripts/selfplay.py --black mcts --white mcts \
   --black-checkpoint ckpt.pt --white-checkpoint ckpt.pt \
   --games 2000 --opening-random-plies 6 --device cuda \
-  --mcts-config draughts/config/mcts.yaml
+  --mcts-config draughts/config/mcts_selfplay.yaml
 
 # 从头训练（Phase 3 标准做法，不 resume）
 python3 trainer/train_supervised.py data.jsonl --no-cache --epochs 10 --device cuda

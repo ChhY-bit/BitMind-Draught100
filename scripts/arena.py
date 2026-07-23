@@ -248,8 +248,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--mcts-config",
-        default=None,
-        help="YAML file for MCTSAgent parameters.",
+        default="draughts/config/mcts.yaml",
+        help="YAML file for MCTSAgent parameters (default: mcts.yaml for deterministic play).",
     )
     args = merge_arena_args(parser.parse_args())
 
@@ -287,6 +287,7 @@ def merge_arena_args(cli_args: argparse.Namespace) -> argparse.Namespace:
         "alphabeta_depth",
         "black_checkpoint",
         "white_checkpoint",
+        "mcts_config",
         "device",
     ):
         value = getattr(cli_args, key)

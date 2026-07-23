@@ -26,7 +26,6 @@ ALPHABETA_DEPTH=6 GAMES=2000 NUM_WORKERS=16 OPENING_RANDOM_PLIES=8 \
 
 # MCTS 自博弈（GPU 多进程，双卡并行）
 GAMES=2000 NUM_WORKERS=8 CHECKPOINT=trainer/checkpoints/round6/best.pt \
-  MCTS_CONFIG=draughts/config/mcts.yaml \
   ./run/selfplay_cuda0.sh &
 ./run/selfplay_cuda1.sh &
 wait
@@ -57,7 +56,7 @@ CHECKPOINT=trainer/checkpoints/round5/best.pt \
 | 环境变量 | cuda0 默认 | cuda1 默认 | 说明 |
 |---------|-----------|-----------|------|
 | `CHECKPOINT` | `trainer/checkpoints/round5/...` | 同 | 网络权重路径 |
-| `MCTS_CONFIG` | `draughts/config/mcts.yaml` | 同 | MCTS 搜索配置文件 |
+| `MCTS_CONFIG` | `draughts/config/mcts_selfplay.yaml` | 同 | MCTS 搜索配置（自博弈专用，开启探索） |
 | `OUTPUT_DIR` | `data/selfplay_cuda0` | `data/selfplay_cuda1` | JSONL 输出目录 |
 | `NUM_WORKERS` | 12 | 12 | 并行进程数 |
 | `BASE_SEED` | 7021 | 8021 | 起始随机种子 |
@@ -65,7 +64,11 @@ CHECKPOINT=trainer/checkpoints/round5/best.pt \
 
 > **注意**：`selfplay_cuda0.sh` 和 `selfplay_cuda1.sh` 需配合使用，分别绑定 GPU 0 和 GPU 1。单卡环境只跑其中一个即可。
 >
-> **关于 MCTS 配置**：自博弈时应使用开启了 `temperature` 和 `add_noise` 的配置以增加对局多样性；评测时则应关闭这两项以追求最强走法。详见 [`draughts/config/mcts.yaml`](../draughts/config/mcts.yaml) 中的注释。
+> **关于 MCTS 配置**：项目提供两套开箱即用的配置：
+> - `mcts_selfplay.yaml` — 自博弈专用（`temperature=1.0`, `add_noise=true`），开启探索以增加数据多样性
+> - `mcts.yaml` — 评测/实战/GUI 专用（`temperature=0.0`, `add_noise=false`），追求最强棋力
+>
+> 所有自博弈脚本默认使用 `mcts_selfplay.yaml`；所有评测脚本默认使用 `mcts.yaml`。可通过 `MCTS_CONFIG` 环境变量覆盖。
 
 ### selfplay_cpu.sh
 
@@ -74,7 +77,7 @@ GPU 不可用时，MCTS 自博弈可退回到 CPU 运行。CPU 上网络推理�
 | 环境变量 | 默认值 | 说明 |
 |---------|--------|------|
 | `CHECKPOINT` | `trainer/checkpoints/round5/...` | 网络权重路径 |
-| `MCTS_CONFIG` | `draughts/config/mcts.yaml` | MCTS 搜索配置文件 |
+| `MCTS_CONFIG` | `draughts/config/mcts_selfplay.yaml` | MCTS 搜索配置（自博弈专用，开启探索） |
 | `OUTPUT_DIR` | `data/selfplay_cpu` | JSONL 输出目录 |
 | `NUM_WORKERS` | 4 | 并行进程数（建议 ≤ 核数/2） |
 | `BASE_SEED` | 9021 | 起始随机种子（各 worker 递增） |
@@ -146,7 +149,7 @@ NEW_CHECKPOINT=trainer/checkpoints/round5/best.pt \
 | `OLD_CHECKPOINT` | `trainer/checkpoints/candidate_move_net_best.pt` | 旧网络权重路径 |
 | `ALPHABETA_DEPTH` | 3 | AlphaBeta 搜索深度 |
 | `GAMES` | 100 | 每场对局数（每方向，合计 2×） |
-| `MCTS_CONFIG` | `draughts/config/mcts.yaml` | MCTS 搜索配置（评测应设 temp=0, noise=false） |
+| `MCTS_CONFIG` | `draughts/config/mcts.yaml` | MCTS 搜索配置（评测专用，确定性选子） |
 | `OPENING_RANDOM_PLIES` | 6 | 开局随机半回合数 |
 | `MAX_PLIES` | 300 | 最大半回合数 |
 | `LOG_INTERVAL` | 20 | arena 日志输出间隔 |

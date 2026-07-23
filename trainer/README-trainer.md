@@ -100,6 +100,31 @@ PYTHONPATH=interface:. python3 trainer/train_supervised.py \
 
 以上参数均可被命令行 `--epochs`、`--batch-size`、`--lr` 覆盖。
 
+### 网络结构（`draughts/config/model.yaml`）
+
+当前使用 **v2 结构**，参数量约 **15M**。各参数含义：
+
+| 参数 | v1（旧） | v2（当前） | 说明 |
+|---|---|---|---|
+| `conv_channels` | 64 | 256 | 每层卷积通道数。越大 → 棋盘模式识别越精细 |
+| `conv_layers` | 3 | 3 | 卷积层数。3 层 = 7×7 感受野，10×10 棋盘的合理上限 |
+| `board_feature_dim` | 256 | 512 | 棋盘全局特征维度。参数大头（256×100×512 ≈ 13M），不宜超过 1024 |
+| `move_embedding_dim` | 128 | 256 | 走法嵌入维度 |
+| `hidden_dim` | 128 | 256 | Score/Value head 隐层维度 |
+
+#### 数据量与模型规模匹配
+
+| 参数量 | 推荐数据量 | 说明 |
+|--------|-----------|------|
+| ~2M（v1） | 0.5M–1M | 旧版默认，1.5M 以上边际收益递减 |
+| ~15M（v2） | **3M–5M** | 当前推荐。1.5M 可跑但未饱和 |
+
+> **现有数据（1.4M–1.5M）可直接用于 v2 训练**，先验证架构有效性（arena vs 旧版），再用 v2 网络做 MCTS 自博弈扩大数据量至 3M+。
+
+#### 跨版本兼容
+
+checkpoint 文件内保存了 `model_config`，arena、GUI、selfplay 加载时自动按各自的结构建网，**不同结构的 checkpoint 可同台对战**。无需为旧 checkpoint 保留旧 YAML。
+
 ### 数据加载
 
 训练管线做了以下优化以最大化 GPU 利用率：

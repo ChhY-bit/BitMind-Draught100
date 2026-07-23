@@ -83,7 +83,7 @@ run_arena() {
 
     echo "  [$label] $black vs $white on $device (seed=$seed)  → $out"
 
-    OMP_NUM_THREADS=1 PYTHONPATH=interface:. \
+    OMP_NUM_THREADS=1 PYTHONUNBUFFERED=1 PYTHONPATH=interface:. \
     python3 scripts/arena.py \
         --black "$black" --white "$white" \
         --black-checkpoint "$black_ckpt" \

@@ -39,7 +39,7 @@ PYTHONPATH=interface:. python3 scripts/selfplay.py \
 | `--black-checkpoint` | path | none | 黑方 supervised checkpoint |
 | `--white-checkpoint` | path | none | 白方 supervised checkpoint |
 | `--device` | str | auto | 推理设备：`cpu`、`cuda`（= `cuda:0`）、`cuda:1` |
-| `--mcts-config` | path | none | MCTSAgent 的 YAML 配置 |
+| `--mcts-config` | path | `draughts/config/mcts_selfplay.yaml` | MCTSAgent 的 YAML 配置（自博弈默认使用探索配置） |
 | `--append` | flag | off | 追加写入 output 文件 |
 | `--auto-output-name` | flag | on | output 已存在时自动生成 `_001`/`_002` 新文件名 |
 
@@ -54,11 +54,11 @@ MCTS 自博弈时，为了让生成的对局数据足够多样化（而非每局
 | Dirichlet 噪声 | **思考层**（MCTS 内部） | `dirichlet_alpha`、`dirichlet_epsilon` | 干预根节点 prior，影响"怎么搜" |
 | temperature | **决策层**（MCTS 外部） | `temperature` | 干预最终走法选择，影响"怎么选" |
 
-**Dirichlet 噪声**（思考层）：在 MCTS 搜索开始前，将根节点的网络先验概率与 Dirichlet 分布混合（`P_root = (1-ε)×P_net + ε×Dirichlet(α)`）。α<1 时噪声随机"偏爱"少数走法，模拟"棋手偶然的灵光一现"，迫使 MCTS 不要只盯着网络最推荐的那几步棋。由 `mcts.yaml` 中的 `add_noise` 配置项控制。自博弈时应设为 `true`，评测/实战时应设为 `false`。
+**Dirichlet 噪声**（思考层）：在 MCTS 搜索开始前，将根节点的网络先验概率与 Dirichlet 分布混合（`P_root = (1-ε)×P_net + ε×Dirichlet(α)`）。α<1 时噪声随机"偏爱"少数走法，模拟"棋手偶然的灵光一现"，迫使 MCTS 不要只盯着网络最推荐的那几步棋。由配置文件中的 `add_noise` 控制——自博弈用 `mcts_selfplay.yaml`（开启），评测用 `mcts.yaml`（关闭）。
 
-**temperature**（决策层）：800 次模拟全部完成后，从 visit count 分布中选择最终走法时介入。temperature=0（默认）直接选 visits 最多的走法；temperature>0 时按 `softmax(visits/temperature)` 采样，偶尔也会选次优走法，增加对局变化。评测/实战时应设为 0.0。
+**temperature**（决策层）：搜索完成后从 visit count 分布中选择最终走法时介入。temperature=0 直接选 visits 最多的走法（评测用 `mcts.yaml`）；temperature>0 时按 `softmax(visits/temperature)` 采样（自博弈用 `mcts_selfplay.yaml`）。
 
-**两者的配合**：Dirichlet 让 MCTS "想得更广"（搜索阶段），temperature 让对局"走得更花"（决策阶段）。两者都是"自博弈开启、实战关闭"的参数。关闭 Dirichlet 噪声有两种等价方式：`add_noise = false` 或 `dirichlet_epsilon = 0.0`。当前项目的开局多样性主要靠 `--opening-random-plies`（前 N 步随机走），详见 [draughts/config/mcts.yaml](../draughts/config/mcts.yaml) 中各参数的详细注释。
+**两者的配合**：Dirichlet 让 MCTS "想得更广"（搜索阶段），temperature 让对局"走得更花"（决策阶段）。项目提供两套开箱即用的配置，自博弈脚本自动加载 `mcts_selfplay.yaml`，评测/GUI 自动加载 `mcts.yaml`。关闭 Dirichlet 噪声有两种等价方式：`add_noise = false` 或 `dirichlet_epsilon = 0.0`。当前项目的开局多样性主要靠 `--opening-random-plies`（前 N 步随机走），详见 [draughts/config/mcts_selfplay.yaml](../draughts/config/mcts_selfplay.yaml) 和 [draughts/config/mcts.yaml](../draughts/config/mcts.yaml)。
 
 ---
 
@@ -129,7 +129,7 @@ PYTHONPATH=interface:. python3 scripts/arena.py \
 | `--black-checkpoint` | path | none | 黑方 supervised checkpoint |
 | `--white-checkpoint` | path | none | 白方 supervised checkpoint |
 | `--device` | str | auto | 推理设备：`cpu`、`cuda`（= `cuda:0`）、`cuda:1` |
-| `--mcts-config` | path | none | MCTSAgent YAML 配置 |
+| `--mcts-config` | path | `draughts/config/mcts.yaml` | MCTSAgent YAML 配置（评测默认使用确定性配置） |
 
 ---
 

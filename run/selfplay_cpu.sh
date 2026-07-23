@@ -31,7 +31,7 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 CHECKPOINT="${CHECKPOINT:-trainer/checkpoints/round5/candidate_move_net_best.pt}"
-MCTS_CONFIG="${MCTS_CONFIG:-draughts/config/mcts.yaml}"
+MCTS_CONFIG="${MCTS_CONFIG:-draughts/config/mcts_selfplay.yaml}"
 OUTPUT_DIR="${OUTPUT_DIR:-data/selfplay_cpu}"
 NUM_WORKERS="${NUM_WORKERS:-20}"
 BASE_SEED="${BASE_SEED:-9999}"
