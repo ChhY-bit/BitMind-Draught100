@@ -100,23 +100,25 @@ run_arena() {
     PIDS+=($!)
 }
 
+# 六场使用同一 SEED：确保所有评测面对相同开局序列，
+# 正反方向消除先手偏差时才不会被开局随机性污染。
 # ── 组 1: AlphaBeta vs 新网络 MCTS ──────────────────────
 run_arena "ab_new_cuda0" "cuda:0" "mcts" "alphabeta" \
-    "$NEW_CHECKPOINT" "none" "$((SEED + 0))"
+    "$NEW_CHECKPOINT" "none" "$SEED"
 run_arena "ab_new_cuda1" "cuda:1" "alphabeta" "mcts" \
-    "none" "$NEW_CHECKPOINT" "$((SEED + 1))"
+    "none" "$NEW_CHECKPOINT" "$SEED"
 
 # ── 组 2: AlphaBeta vs 旧网络 MCTS ──────────────────────
 run_arena "ab_old_cuda0" "cuda:0" "mcts" "alphabeta" \
-    "$OLD_CHECKPOINT" "none" "$((SEED + 2))"
+    "$OLD_CHECKPOINT" "none" "$SEED"
 run_arena "ab_old_cuda1" "cuda:1" "alphabeta" "mcts" \
-    "none" "$OLD_CHECKPOINT" "$((SEED + 3))"
+    "none" "$OLD_CHECKPOINT" "$SEED"
 
 # ── 组 3: 旧网络 MCTS vs 新网络 MCTS ────────────────────
 run_arena "old_new_cuda0" "cuda:0" "mcts" "mcts" \
-    "$NEW_CHECKPOINT" "$OLD_CHECKPOINT" "$((SEED + 4))"
+    "$NEW_CHECKPOINT" "$OLD_CHECKPOINT" "$SEED"
 run_arena "old_new_cuda1" "cuda:1" "mcts" "mcts" \
-    "$OLD_CHECKPOINT" "$NEW_CHECKPOINT" "$((SEED + 5))"
+    "$OLD_CHECKPOINT" "$NEW_CHECKPOINT" "$SEED"
 
 echo ""
 echo "All 6 arenas launched (PIDs: ${PIDS[*]})."
