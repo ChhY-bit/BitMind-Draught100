@@ -224,8 +224,9 @@ MCTS 搜索是顺序的（选子→推理→回传循环），单个进程无法
 
 ```bash
 # MCTS 自博弈（GPU 多进程）：每卡 8 进程 × 200 局
-GAMES=200 NUM_WORKERS=8 CHECKPOINT=trainer/checkpoints/round6/best.pt \
-  ./run/selfplay_cuda0.sh &
+# 注意：必须使用 export 而非行内 VAR=val，否则仅对第一个 & 前的命令生效。
+export GAMES=200 NUM_WORKERS=8 CHECKPOINT=trainer/checkpoints/round6/best.pt
+./run/selfplay_cuda0.sh &
 ./run/selfplay_cuda1.sh &
 wait
 

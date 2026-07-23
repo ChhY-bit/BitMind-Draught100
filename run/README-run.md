@@ -25,8 +25,9 @@ ALPHABETA_DEPTH=6 GAMES=2000 NUM_WORKERS=16 OPENING_RANDOM_PLIES=8 \
   ./run/selfplay_ab.sh
 
 # MCTS 自博弈（GPU 多进程，双卡并行）
-GAMES=2000 NUM_WORKERS=8 CHECKPOINT=trainer/checkpoints/round6/best.pt \
-  ./run/selfplay_cuda0.sh &
+# 注意：必须使用 export，行内 VAR=val 只对第一个 & 前的命令生效。
+export GAMES=2000 NUM_WORKERS=8 CHECKPOINT=trainer/checkpoints/round6/best.pt
+./run/selfplay_cuda0.sh &
 ./run/selfplay_cuda1.sh &
 wait
 
