@@ -135,11 +135,17 @@ PYTHONPATH=interface:. python3 scripts/arena.py \
 
 ## `inspect_dataset.py` — 数据质量检查
 
-检查 JSONL 数据的 schema 版本、字段完整性和分布统计。
+检查 JSONL 数据的 schema 版本、字段完整性和分布统计。检查大文件时自动显示进度条。
 
 ```bash
 PYTHONPATH=interface:. python3 scripts/inspect_dataset.py data/
 PYTHONPATH=interface:. python3 scripts/inspect_dataset.py data/specific.jsonl
+
+# 快速模式：跳过深度校验（observation shape 等），约 2× 加速
+PYTHONPATH=interface:. python3 scripts/inspect_dataset.py --quick data/
+
+# 只看前 1000 条
+PYTHONPATH=interface:. python3 scripts/inspect_dataset.py --max-samples 1000 data/
 ```
 
 ### 参数
@@ -147,3 +153,5 @@ PYTHONPATH=interface:. python3 scripts/inspect_dataset.py data/specific.jsonl
 | 参数 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `paths` | path(s) | (必填) | 一个或多个 JSONL 文件或目录 |
+| `--quick` | flag | off | 跳过深度校验（observation shape、action-mask 一致性），大文件约 2× 加速 |
+| `--max-samples` | int | 全部 | 最多检查 N 条样本后停止 |

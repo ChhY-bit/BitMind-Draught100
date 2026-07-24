@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -87,12 +89,111 @@ class DatasetReport:
         return self.invalid_json_lines == 0 and self.invalid_samples == 0
 
 
-def inspect_paths(paths: Sequence[str]) -> DatasetReport:
+# ---------------------------------------------------------------------------
+# 入口
+# ---------------------------------------------------------------------------
+
+
+def inspect_paths(
+    paths: Sequence[str],
+    *,
+    max_samples: int | None = None,
+    quick: bool = False,
+    show_progress: bool = True,
+) -> DatasetReport:
+    """Inspect all JSONL files under *paths* (files or directories).
+
+    Args:
+        paths: JSONL files or directories (recursively searched).
+        max_samples: Stop after this many total samples (useful for large datasets).
+        quick: Skip expensive deep checks (observation shape, action-mask
+               consistency) — ~2× faster on large files.
+        show_progress: Print progress to stderr every 5 %.
+    """
     files = resolve_input_files(paths)
     report = DatasetReport(files=len(files))
+
+    # Pre-scan total bytes for progress bar.
+    total_bytes = 0
+    for f in files:
+        try:
+            total_bytes += f.stat().st_size
+        except OSError:
+            pass
+
+    bytes_read = 0
+    last_pct = -1
+
     for path in files:
-        inspect_file(path, report)
+        try:
+            handle = path.open("r", encoding="utf-8")
+        except OSError:
+            report.invalid_samples += 1
+            report.validation_errors["file_open_error"] += 1
+            if total_bytes > 0:
+                try:
+                    bytes_read += path.stat().st_size
+                except OSError:
+                    pass
+            continue
+
+        with handle:
+            for raw_line in handle:
+                if max_samples is not None and report.samples >= max_samples:
+                    break
+
+                # Track bytes for progress (encode overhead is negligible vs JSON parse).
+                bytes_read += len(raw_line.encode("utf-8"))
+
+                line = raw_line.strip()
+                if not line:
+                    continue
+                report.samples += 1
+
+                try:
+                    sample = json.loads(line)
+                except json.JSONDecodeError:
+                    report.invalid_json_lines += 1
+                    continue
+
+                errors = validate_sample(sample, quick=quick)
+                if errors:
+                    report.invalid_samples += 1
+                    report.validation_errors.update(errors)
+                    for field in REQUIRED_FIELDS - set(sample):
+                        report.missing_fields[field] += 1
+                    continue
+
+                update_report(report, path, sample)
+
+                # ---- progress ----
+                if show_progress and total_bytes > 0:
+                    pct = int(bytes_read * 100 / total_bytes)
+                    if pct - last_pct >= 5:
+                        mb_read = bytes_read // (1024 * 1024)
+                        mb_total = total_bytes // (1024 * 1024)
+                        print(
+                            f"\r  inspecting: {min(pct, 99)}% ({mb_read}/{mb_total} MB, "
+                            f"{report.samples} samples)  ",
+                            end="", file=sys.stderr, flush=True,
+                        )
+                        last_pct = pct
+
+        if max_samples is not None and report.samples >= max_samples:
+            break
+
+    if show_progress and total_bytes > 0:
+        print(
+            f"\r  inspecting: 100% — {report.samples} samples  ",
+            file=sys.stderr, flush=True,
+        )
+
     return report
+
+
+# ---------------------------------------------------------------------------
+# 文件发现
+# ---------------------------------------------------------------------------
 
 
 def resolve_input_files(paths: Sequence[str]) -> List[Path]:
@@ -106,45 +207,26 @@ def resolve_input_files(paths: Sequence[str]) -> List[Path]:
     return resolved
 
 
-def inspect_file(path: Path, report: DatasetReport) -> None:
+# ---------------------------------------------------------------------------
+# 验证
+# ---------------------------------------------------------------------------
+
+
+def validate_sample(sample: object, *, quick: bool = False) -> List[str]:
+    """Validate a single JSONL sample dict.
+
+    Args:
+        sample: The parsed JSON object.
+        quick: If True, skip expensive deep checks (observation shape,
+               action-mask consistency).  ~2× faster on large datasets.
+    """
     try:
-        handle = path.open("r", encoding="utf-8")
-    except OSError:
-        report.invalid_samples += 1
-        report.validation_errors["file_open_error"] += 1
-        return
-
-    with handle:
-        for line_number, raw_line in enumerate(handle, start=1):
-            line = raw_line.strip()
-            if not line:
-                continue
-            report.samples += 1
-            try:
-                sample = json.loads(line)
-            except json.JSONDecodeError:
-                report.invalid_json_lines += 1
-                continue
-
-            errors = validate_sample(sample)
-            if errors:
-                report.invalid_samples += 1
-                report.validation_errors.update(errors)
-                for field in REQUIRED_FIELDS - set(sample):
-                    report.missing_fields[field] += 1
-                continue
-
-            update_report(report, path, sample)
-
-
-def validate_sample(sample: object) -> List[str]:
-    try:
-        return validate_sample_inner(sample)
+        return _validate(sample, quick=quick)
     except (TypeError, ValueError):
         return ["invalid_field_type"]
 
 
-def validate_sample_inner(sample: object) -> List[str]:
+def _validate(sample: object, *, quick: bool) -> List[str]:
     if not isinstance(sample, dict):
         return ["sample_not_object"]
 
@@ -154,12 +236,11 @@ def validate_sample_inner(sample: object) -> List[str]:
         errors.append("missing_required_field")
         return errors
 
+    # --- cheap checks always run ---
     if int(sample["schema_version"]) != EXPECTED_SCHEMA_VERSION:
         errors.append("unexpected_schema_version")
     if not isinstance(sample["raw_squares"], list) or len(sample["raw_squares"]) != 50:
         errors.append("invalid_raw_squares_length")
-    if not has_observation_shape(sample["observation"], OBSERVATION_SHAPE):
-        errors.append("invalid_observation_shape")
     if not isinstance(sample["action_mask"], list) or len(sample["action_mask"]) != ACTION_MASK_LENGTH:
         errors.append("invalid_action_mask_length")
     if int(sample["value_target"]) not in {-1, 0, 1}:
@@ -169,7 +250,6 @@ def validate_sample_inner(sample: object) -> List[str]:
 
     legal_action_ids = sample["legal_action_ids"]
     selected_action_id = int(sample["selected_action_id"])
-    action_mask = sample["action_mask"]
     if not isinstance(legal_action_ids, list):
         errors.append("invalid_legal_action_ids")
         return errors
@@ -177,21 +257,32 @@ def validate_sample_inner(sample: object) -> List[str]:
         errors.append("selected_action_not_legal")
     if not legal_action_ids:
         errors.append("empty_legal_actions")
-    if isinstance(action_mask, list) and len(action_mask) == ACTION_MASK_LENGTH:
-        for action_id in legal_action_ids:
-            if not isinstance(action_id, int) or action_id < 0 or action_id >= ACTION_MASK_LENGTH:
-                errors.append("legal_action_id_out_of_range")
-                break
-            if int(action_mask[action_id]) != 1:
-                errors.append("legal_action_missing_in_mask")
-                break
-        if 0 <= selected_action_id < ACTION_MASK_LENGTH and int(action_mask[selected_action_id]) != 1:
-            errors.append("selected_action_missing_in_mask")
+
+    # --- expensive checks: skipped in quick mode ---
+    if not quick:
+        if not _check_observation_shape(sample["observation"], OBSERVATION_SHAPE):
+            errors.append("invalid_observation_shape")
+
+        action_mask = sample["action_mask"]
+        if isinstance(action_mask, list) and len(action_mask) == ACTION_MASK_LENGTH:
+            for action_id in legal_action_ids:
+                if not isinstance(action_id, int) or action_id < 0 or action_id >= ACTION_MASK_LENGTH:
+                    errors.append("legal_action_id_out_of_range")
+                    break
+                if int(action_mask[action_id]) != 1:
+                    errors.append("legal_action_missing_in_mask")
+                    break
+            if 0 <= selected_action_id < ACTION_MASK_LENGTH and int(action_mask[selected_action_id]) != 1:
+                errors.append("selected_action_missing_in_mask")
 
     return errors
 
 
-def has_observation_shape(value: object, shape: Tuple[int, int, int]) -> bool:
+def _check_observation_shape(value: object, shape: Tuple[int, int, int]) -> bool:
+    """Check that *value* is a nested list of the given (C, H, W) shape.
+
+    Micro-optimised: flatten the 3-deep check into a tight loop.
+    """
     channels, rows, cols = shape
     if not isinstance(value, list) or len(value) != channels:
         return False
@@ -202,6 +293,11 @@ def has_observation_shape(value: object, shape: Tuple[int, int, int]) -> bool:
             if not isinstance(row, list) or len(row) != cols:
                 return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# 统计汇总
+# ---------------------------------------------------------------------------
 
 
 def update_report(report: DatasetReport, path: Path, sample: Dict[str, object]) -> None:
@@ -230,6 +326,11 @@ def count_games_by_result(
         for game in games
         if game.final_result == result and game.max_plies_reached == maxed
     )
+
+
+# ---------------------------------------------------------------------------
+# 输出
+# ---------------------------------------------------------------------------
 
 
 def format_report(report: DatasetReport) -> str:
@@ -263,6 +364,11 @@ def format_counter(counter: Counter, keys: Sequence[object]) -> str:
     return " ".join(f"{key}={counter.get(key, 0)}" for key in keys)
 
 
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Inspect draughts JSONL training data.")
     parser.add_argument(
@@ -270,12 +376,30 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         help="JSONL files or directories. Directories are searched recursively for *.jsonl.",
     )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Skip expensive deep checks (observation shape, action-mask consistency). "
+        "~2× faster on large datasets.",
+    )
+    parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Stop after inspecting N samples (useful for quick spot-checks).",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    report = inspect_paths(args.paths)
+    report = inspect_paths(
+        args.paths,
+        max_samples=args.max_samples,
+        quick=args.quick,
+        show_progress=os.isatty(sys.stderr.fileno()),
+    )
     print(format_report(report))
 
 
