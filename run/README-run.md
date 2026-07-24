@@ -10,10 +10,13 @@
 |------|------|---------|
 | `selfplay_ab.sh` | AlphaBeta 自博弈（双深度非对称） | CPU 多核 |
 | `selfplay_cpu.sh` | MCTS 自博弈 — CPU | CPU 多核 |
+| `selfplay_cuda.sh` | **MCTS 自博弈 — 单卡/多卡（推荐）** | 任意 GPU |
 | `selfplay_cuda0.sh` | MCTS 自博弈 — GPU 0 | GPU 0 + CPU |
 | `selfplay_cuda1.sh` | MCTS 自博弈 — GPU 1 | GPU 1 + CPU |
 | `search_improve.sh` | AlphaBeta 并行重新打分（打软标签） | CPU 多核 |
 | `benchmark.sh` | 多维度批量评测 + 汇总报告 | GPU 0 + GPU 1 |
+
+> **推荐使用 `selfplay_cuda.sh`** 代替手动 `&` 后台运行。它作为前台脚本运行，Ctrl+C 会同时终止所有 GPU 上的 worker，不会出现「只停了一张卡」的问题。
 
 ## 用法
 
@@ -24,12 +27,13 @@
 ALPHABETA_DEPTH=6 GAMES=2000 NUM_WORKERS=16 OPENING_RANDOM_PLIES=8 \
   ./run/selfplay_ab.sh
 
-# MCTS 自博弈（GPU 多进程，双卡并行）
-# 注意：必须使用 export，行内 VAR=val 只对第一个 & 前的命令生效。
-export GAMES=2000 NUM_WORKERS=8 CHECKPOINT=trainer/checkpoints/round6/best.pt
-./run/selfplay_cuda0.sh &
-./run/selfplay_cuda1.sh &
-wait
+# MCTS 自博弈（单卡）
+CHECKPOINT=trainer/checkpoints/round6/best.pt GAMES=2000 \
+  ./run/selfplay_cuda.sh 0
+
+# MCTS 自博弈（双卡并行）
+CHECKPOINT=trainer/checkpoints/round6/best.pt GAMES=2000 \
+  ./run/selfplay_cuda.sh 0 1
 
 # MCTS 自博弈（CPU，无 GPU 时使用）
 CHECKPOINT=trainer/checkpoints/round5/best.pt \
@@ -52,7 +56,28 @@ CHECKPOINT=trainer/checkpoints/round5/best.pt \
 | `GAMES` | 500 | 每个 worker 生成局数 |
 | `OPENING_RANDOM_PLIES` | 8 | 开局随机半回合数 |
 
+### selfplay_cuda.sh（推荐）
+
+统一管理单卡或多卡自博弈。作为前台脚本运行，**Ctrl+C 会同时终止所有 GPU 上的 worker**，不会出现后台 `&` 运行时只停一张卡的问题。
+
+```bash
+./run/selfplay_cuda.sh          # 仅 GPU 0
+./run/selfplay_cuda.sh 0        # 仅 GPU 0
+./run/selfplay_cuda.sh 0 1      # GPU 0 + GPU 1
+```
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `CHECKPOINT` | `trainer/checkpoints/round5/...` | 网络权重路径 |
+| `MCTS_CONFIG` | `draughts/config/mcts_selfplay.yaml` | MCTS 搜索配置 |
+| `GAMES` | 500 | 每个 worker 生成局数 |
+| `NUM_WORKERS` | 12 | 每卡并行进程数 |
+| `OUTPUT_DIR` | (每卡独立默认) | 输出根目录（每卡自动追加 `_gpuN` 后缀防冲突） |
+| `BASE_SEED` | 7021 | 起始种子（每卡自动递增 1000） |
+
 ### selfplay_cuda0.sh / selfplay_cuda1.sh
+
+单卡脚本，一般不需要直接调用——用 `selfplay_cuda.sh` 即可。仅在需要自定义每卡不同参数时使用。
 
 | 环境变量 | cuda0 默认 | cuda1 默认 | 说明 |
 |---------|-----------|-----------|------|
