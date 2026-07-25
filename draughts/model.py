@@ -12,7 +12,7 @@ from .move_encoding import MOVE_FEATURE_DIM
 
 BOARD_CHANNELS = 6
 BOARD_SIZE = 10
-MASKED_LOGIT = -1.0e9
+MASKED_LOGIT = -3e4  # fits in FP16, still effectively -inf for softmax
 DEFAULT_MODEL_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "model.yaml"
 
 

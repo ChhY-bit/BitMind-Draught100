@@ -45,7 +45,7 @@ echo "    mcts config: $MCTS_CONFIG"
 echo "    output:      $OUTPUT_DIR"
 
 for i in $(seq 0 $((NUM_WORKERS - 1))); do
-    OMP_NUM_THREADS=2 PYTHONPATH=interface:. \
+    CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=2 PYTHONPATH=interface:. \
     python3 scripts/selfplay.py \
         --black mcts --white mcts \
         --black-checkpoint "$CHECKPOINT" \
