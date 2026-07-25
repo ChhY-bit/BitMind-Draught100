@@ -180,6 +180,8 @@ class SupervisedAgent(Agent):
         state_dict = checkpoint.get("model_state_dict", checkpoint)
         self.model.load_state_dict(state_dict)
         self.model.eval()
+        if self.model.config.use_compile and hasattr(torch, "compile"):
+            self.model = torch.compile(self.model, dynamic=True)
         self.last_policy_logits: Optional[List[float]] = None
         self.last_value: Optional[float] = None
         self.last_latent: Optional[torch.Tensor] = None
@@ -240,6 +242,8 @@ class MCTSAgent(Agent):
         state_dict = checkpoint.get("model_state_dict", checkpoint)
         self.model.load_state_dict(state_dict)
         self.model.eval()
+        if self.model.config.use_compile and hasattr(torch, "compile"):
+            self.model = torch.compile(self.model, dynamic=True)
 
     def select_action(
         self,

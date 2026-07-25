@@ -121,6 +121,28 @@ PYTHONPATH=interface:. python3 trainer/train_supervised.py \
 
 > **现有数据（1.4M–1.5M）可直接用于 v2 训练**，先验证架构有效性（arena vs 旧版），再用 v2 网络做 MCTS 自博弈扩大数据量至 3M+。
 
+#### 推理加速（`use_fp16` / `use_compile`）
+
+`model.yaml` 提供两个推理加速开关，仅影响 MCTS 搜索和网络推理，**不影响训练**：
+
+| 参数 | 默认 | 效果 | 首次延迟 |
+|------|------|------|---------|
+| `use_fp16` | `false` | FP16 混合精度，约 1.5-2× 加速 | 无 |
+| `use_compile` | `false` | `torch.compile` 算子熔合，约 20-40% 加速 | 2-5 秒编译 |
+
+**使用建议**：
+
+| 场景 | `use_fp16` | `use_compile` | 说明 |
+|------|-----------|--------------|------|
+| 自博弈（大量产数据） | `true` | `true` | 最快速度，编译延迟可忽略 |
+| 评测（arena） | `true` | `true` | 评测时间缩短 |
+| **GUI 实战** | `true` | **`false`** | 避免第一步的编译延迟影响体验 |
+| 纯 CPU | `false` | `false` | CPU 不支持 FP16 autocast |
+
+> **关闭方法**：在 `draughts/config/model.yaml` 中将对应项设为 `false` 即可。两个开关互相独立，可单独开启。
+>
+> **叠加效果**：FP16 + compile + 400 sims ≈ v1 800 sims 的产出速度，同时保持 v2 的数据质量。
+
 #### 跨版本兼容
 
 checkpoint 文件内保存了 `model_config`，arena、GUI、selfplay 加载时自动按各自的结构建网，**不同结构的 checkpoint 可同台对战**。无需为旧 checkpoint 保留旧 YAML。

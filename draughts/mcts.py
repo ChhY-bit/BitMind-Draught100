@@ -216,6 +216,25 @@ def mcts_search(
     )
 
 
+def _maybe_autocast(model, device: torch.device):
+    """Return ``torch.autocast`` if FP16 is enabled on a CUDA device, else a no-op context."""
+    model_config = getattr(model, "config", None)
+    use_fp16 = model_config is not None and getattr(model_config, "use_fp16", False)
+    if use_fp16 and device.type == "cuda":
+        return torch.autocast(device_type="cuda", dtype=torch.float16)
+    return _null_context()
+
+
+class _null_context:
+    """A no-op context manager compatible with both ``with`` and ``async with``."""
+
+    def __enter__(self) -> None:
+        pass
+
+    def __exit__(self, *args: object) -> None:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # 单次模拟
 # ---------------------------------------------------------------------------
@@ -378,7 +397,7 @@ def _batch_infer(
     moves_batch = moves_batch.to(device)
     mask_batch = mask_batch.to(device)
 
-    with torch.no_grad():
+    with torch.no_grad(), _maybe_autocast(model, device):
         output = model(board_batch, moves_batch, mask_batch)
 
     return output  # {"policy_logits": [B, max_M], "value": [B]}

@@ -7,10 +7,11 @@
 
 # num_simulations — 每步棋执行多少次 MCTS 模拟。
 # 自博弈需要生成大量对局，sims 过高会导致数据产出太慢。
-#   400 → 快速产数据
-#   800 → 均衡（推荐）
-#   1200 → 高质量但慢
-num_simulations: 800
+# v2 网络（15M）单次推理约 1.5ms，400 sims 是对局质量与产量的平衡点。
+#   200 → 极速产数据
+#   400 → 均衡（推荐，配合 FP16+compile 可接近 v1 的 800 sims 产出速度）
+#   800 → 高质量但慢（v1 默认值）
+num_simulations: 400
 
 # c_puct — 探索系数。
 # PUCT = Q(s,a) + c_puct × P(s,a) × √N(s) / (1 + N(s,a))

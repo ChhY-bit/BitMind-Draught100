@@ -28,6 +28,9 @@ class ModelConfig:
     move_feature_dim: int = MOVE_FEATURE_DIM
     move_embedding_dim: int = 128
     hidden_dim: int = 128
+    # 推理加速选项（默认关闭，自博弈时可开启）
+    use_fp16: bool = False       # FP16 混合精度推理，约 1.5-2× 加速
+    use_compile: bool = False    # torch.compile 算子熔合（需 PyTorch >= 2.0）
 
 
 class CandidateMoveNet(nn.Module):
@@ -130,7 +133,7 @@ def build_board_encoder(config: ModelConfig) -> nn.Sequential:
 def load_model_config(config_path: Optional[str] = None) -> ModelConfig:
     path = Path(config_path) if config_path is not None else DEFAULT_MODEL_CONFIG_PATH
     default_config = ModelConfig()
-    values = {
+    defaults: dict[str, object] = {
         "board_channels": default_config.board_channels,
         "board_size": default_config.board_size,
         "conv_channels": default_config.conv_channels,
@@ -141,18 +144,22 @@ def load_model_config(config_path: Optional[str] = None) -> ModelConfig:
         "move_feature_dim": default_config.move_feature_dim,
         "move_embedding_dim": default_config.move_embedding_dim,
         "hidden_dim": default_config.hidden_dim,
+        "use_fp16": default_config.use_fp16,
+        "use_compile": default_config.use_compile,
     }
-    values.update(load_integer_yaml(path, values, "model"))
+    values = dict(defaults)
+    values.update(_load_model_yaml(path, defaults))
     config = ModelConfig(**values)
     validate_model_config(config)
     return config
 
 
-def load_integer_yaml(path: Path, defaults: dict[str, int], config_name: str) -> dict[str, int]:
+def _load_model_yaml(path: Path, defaults: dict[str, object]) -> dict[str, object]:
+    """Parse scalar key:value pairs, inferring type from the default value."""
     if not path.exists():
-        raise FileNotFoundError(f"{config_name} config not found: {path}")
+        raise FileNotFoundError(f"model config not found: {path}")
 
-    values: dict[str, int] = {}
+    values: dict[str, object] = {}
     for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         line = raw_line.split("#", 1)[0].strip()
         if not line:
@@ -163,12 +170,24 @@ def load_integer_yaml(path: Path, defaults: dict[str, int], config_name: str) ->
         key = key.strip()
         value = value.strip()
         if key not in defaults:
-            raise ValueError(f"unknown {config_name} config key on line {line_number}: {key}")
+            raise ValueError(f"unknown model config key on line {line_number}: {key}")
+        default = defaults[key]
         try:
-            values[key] = int(value)
+            if isinstance(default, bool):
+                raw_lower = value.lower()
+                if raw_lower in ("true", "yes", "1"):
+                    values[key] = True
+                elif raw_lower in ("false", "no", "0"):
+                    values[key] = False
+                else:
+                    raise ValueError(f"invalid bool value: {value}")
+            elif isinstance(default, int):
+                values[key] = int(value)
+            else:
+                values[key] = value
         except ValueError as exc:
             raise ValueError(
-                f"{config_name} config value must be an integer on line {line_number}"
+                f"model config value has wrong type on line {line_number}"
             ) from exc
     return values
 
