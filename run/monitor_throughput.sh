@@ -229,59 +229,16 @@ draw_bar() {
     printf '%s' "${_BAR_FULL:0:$filled}"
 }
 
-# ── 渲染仪表盘 ──────────────────────────────────────────
+# ── 渲染仪表盘（接收预计算的行数据） ──────────────────
+# 每行格式: device|files|samples|delta|rate|games
 render_dashboard() {
-    local -n _prev_map="$1"
-    local -n _curr_map="$2"
-    local -n _files_map="$3"
-    local -n _games_map="$4"
-    local elapsed_raw="$5"
-    local sources=("${@:6}")
-
-    # 用 bc 比较浮点：elapsed > 0 ?
-    local elapsed_int
-    elapsed_int=$(as_int "$elapsed_raw")
-    local has_elapsed=false
-    if [[ "$elapsed_int" -gt 0 ]]; then
-        has_elapsed=true
-    fi
-
-    local total_prev=0 total_curr=0
-    declare -A _dev_delta _dev_rate
-    local max_rate=0
-
-    for entry in "${sources[@]}"; do
-        IFS='|' read -r device _dir _games <<< "$entry"
-        local curr=0 prev=0
-        curr="${_curr_map[$device]:-0}"
-        prev="${_prev_map[$device]:-0}"
-        curr=$(as_int "$curr")
-        prev=$(as_int "$prev")
-
-        local delta=$((curr - prev))
-        [[ "$delta" -lt 0 ]] && delta=0
-
-        local rate=0
-        if $has_elapsed; then
-            rate=$(echo "scale=0; $delta / $elapsed_raw" | bc 2>/dev/null || echo 0)
-            rate=$(as_int "$rate")
-        fi
-
-        _dev_delta[$device]=$delta
-        _dev_rate[$device]=$rate
-
-        total_prev=$((total_prev + prev))
-        total_curr=$((total_curr + curr))
-        [[ "$rate" -gt "$max_rate" ]] && max_rate=$rate
-    done
-
-    local total_delta=$((total_curr - total_prev))
-    [[ "$total_delta" -lt 0 ]] && total_delta=0
-    local total_rate=0
-    if $has_elapsed; then
-        total_rate=$(echo "scale=0; $total_delta / $elapsed_raw" | bc 2>/dev/null || echo 0)
-        total_rate=$(as_int "$total_rate")
-    fi
+    local elapsed_int="$1"
+    local total_curr="$2"
+    local total_delta="$3"
+    local total_rate="$4"
+    local max_rate="$5"
+    shift 5
+    local rows=("$@")
 
     # ── 终端宽度 ─────────────────────────────────────────
     local tw=80
@@ -307,13 +264,8 @@ render_dashboard() {
     printf "${C_CYAN}╠%s${C_RESET}\n" "$(_repeat $((tw-2)) "$_HSINGLE")"
 
     # 各行
-    for entry in "${sources[@]}"; do
-        IFS='|' read -r device _dir _games <<< "$entry"
-        local curr="${_curr_map[$device]:-0}"
-        local files="${_files_map[$device]:-0}"
-        local games="${_games_map[$device]:-?}"
-        local delta="${_dev_delta[$device]:-0}"
-        local rate="${_dev_rate[$device]:-0}"
+    for row in "${rows[@]}"; do
+        IFS='|' read -r device files curr delta rate games <<< "$row"
 
         # 速率颜色
         local rate_color="$C_GREEN"
@@ -362,13 +314,10 @@ render_dashboard() {
     # 速率分布图
     if [[ "$max_rate" -gt 0 ]]; then
         printf "\n${C_BOLD}Rate Distribution:${C_RESET}\n"
-        for entry in "${sources[@]}"; do
-            IFS='|' read -r device _dir _games <<< "$entry"
-            local rate="${_dev_rate[$device]:-0}"
+        for row in "${rows[@]}"; do
+            IFS='|' read -r device _files _curr _delta rate _games <<< "$row"
             local bar_frac=0
-            if [[ "$max_rate" -gt 0 ]]; then
-                bar_frac=$(echo "scale=2; $rate / $max_rate" | bc 2>/dev/null || echo 0)
-            fi
+            bar_frac=$(echo "scale=2; $rate / $max_rate" | bc 2>/dev/null || echo 0)
             local pct
             pct=$(echo "scale=0; $bar_frac * 100" | bc 2>/dev/null || echo 0)
             pct=$(as_int "$pct")
@@ -381,7 +330,7 @@ render_dashboard() {
     fi
 
     # 提示
-    if $has_elapsed && [[ "$total_rate" -gt 0 ]]; then
+    if [[ "$elapsed_int" -gt 0 ]] && [[ "$total_rate" -gt 0 ]]; then
         printf "\n${C_DIM}Sampling every ${INTERVAL}s. Press Ctrl+C to exit.${C_RESET}\n"
     fi
 }
@@ -399,7 +348,7 @@ main() {
 
     mapfile -t SOURCES <<< "$raw_sources"
 
-    # 关联数组：样本数、文件数、游戏数（按 device 索引）
+    # 用普通索引数组存储快照历史；key 是 device，值由两个数组对应
     declare -A prev_samples curr_samples curr_files curr_games
 
     # 初始快照
@@ -417,7 +366,7 @@ main() {
     done <<< "$initial_data"
 
     local last_time
-    last_time=$(date +%s.%N)
+    last_time=$(date +%s)
 
     # ── 单次模式 ─────────────────────────────────────────
     if $ONCE; then
@@ -439,10 +388,11 @@ main() {
         sleep "$INTERVAL"
         tick=$((tick + 1))
 
+        # 用秒级整数时间戳，避免浮点/纳秒兼容问题
         local now
-        now=$(date +%s.%N)
-        local elapsed
-        elapsed=$(echo "scale=3; $now - $last_time" | bc 2>/dev/null || echo "$INTERVAL")
+        now=$(date +%s)
+        local elapsed=$((now - last_time))
+        [[ "$elapsed" -le 0 ]] && elapsed=$INTERVAL
         last_time=$now
 
         # 刷新源列表（进程可能增减）
@@ -453,11 +403,11 @@ main() {
             fi
         fi
 
-        # 当前快照
+        # ── 当前快照 ──────────────────────────────────────
         local snap_data
         snap_data=$(take_snapshot "${SOURCES[@]}")
 
-        # 滚动：本轮 → 上轮，快照 → 本轮
+        # 解析快照并滚动历史
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
             IFS='|' read -r device _dir _games samples files <<< "$line"
@@ -467,11 +417,51 @@ main() {
             curr_games[$device]=$_games
         done <<< "$snap_data"
 
-        # 渲染
+        # ── 在 main 中直接计算 delta/rate，构建显示行 ────
+        local total_prev=0 total_curr=0 max_rate=0
+        local rows=()
+
+        for entry in "${SOURCES[@]}"; do
+            IFS='|' read -r device _dir _games <<< "$entry"
+
+            local prev=0 curr=0
+            prev="${prev_samples[$device]:-0}"
+            curr="${curr_samples[$device]:-0}"
+            # 确保是整数
+            prev=${prev%%.*}
+            curr=${curr%%.*}
+            prev=${prev:-0}
+            curr=${curr:-0}
+
+            local files="${curr_files[$device]:-0}"
+            local games="${curr_games[$device]:-?}"
+
+            local delta=$((curr - prev))
+            [[ "$delta" -lt 0 ]] && delta=0
+
+            local rate=0
+            if [[ "$elapsed" -gt 0 ]]; then
+                rate=$((delta / elapsed))
+            fi
+
+            total_prev=$((total_prev + prev))
+            total_curr=$((total_curr + curr))
+            [[ "$rate" -gt "$max_rate" ]] && max_rate=$rate
+
+            rows+=("${device}|${files}|${curr}|${delta}|${rate}|${games}")
+        done
+
+        local total_delta=$((total_curr - total_prev))
+        [[ "$total_delta" -lt 0 ]] && total_delta=0
+        local total_rate=0
+        if [[ "$elapsed" -gt 0 ]]; then
+            total_rate=$((total_delta / elapsed))
+        fi
+
+        # ── 渲染（传预计算数据，不用 nameref） ──────────
         render_dashboard \
-            prev_samples curr_samples curr_files curr_games \
-            "$elapsed" \
-            "${SOURCES[@]}"
+            "$elapsed" "$total_curr" "$total_delta" "$total_rate" "$max_rate" \
+            "${rows[@]}"
     done
 }
 
