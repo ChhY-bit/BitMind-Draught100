@@ -15,6 +15,7 @@
 | `selfplay_cuda1.sh` | MCTS 自博弈 — GPU 1 | GPU 1 + CPU |
 | `search_improve.sh` | AlphaBeta 并行重新打分（打软标签） | CPU 多核 |
 | `benchmark.sh` | 多维度批量评测 + 汇总报告 | GPU 0 + GPU 1 |
+| `monitor_throughput.sh` | **实时监控数据产出速度** | 仅监控，不占计算资源 |
 
 > **推荐使用 `selfplay_cuda.sh`** 代替手动 `&` 后台运行。它作为前台脚本运行，Ctrl+C 会同时终止所有 GPU 上的 worker，不会出现「只停了一张卡」的问题。
 
@@ -181,3 +182,47 @@ NEW_CHECKPOINT=trainer/checkpoints/round5/best.pt \
 | `LOG_INTERVAL` | 20 | arena 日志输出间隔 |
 | `SEED` | 42 | 基准随机种子（各场递增） |
 | `REPORT_DIR` | `run/` | 报告输出目录 |
+
+### monitor_throughput.sh
+
+实时监控自博弈数据产出速度，终端仪表盘自动刷新。**自动检测**运行中的 selfplay 进程并解析其 `--output` 和 `--device` 参数，按设备（`cpu` / `cuda:0` / `cuda:1`）分组统计产出速率。
+
+```bash
+# 自动检测所有运行中的 selfplay 进程
+./run/monitor_throughput.sh
+
+# 指定要监控的目录
+./run/monitor_throughput.sh -d data/selfplay_cpu -d data/selfplay_cuda0 -d data/selfplay_cuda1
+
+# 调整采样间隔（默认 10 秒）
+./run/monitor_throughput.sh -i 15
+
+# 单次采样（适合脚本调用或 cron）
+./run/monitor_throughput.sh --once -d data/selfplay_cuda0
+```
+
+**仪表盘内容**：
+
+| 列 | 说明 |
+|---|------|
+| `SOURCE` | 设备标识（`cpu`、`cuda:0`、`cuda:1` 等） |
+| `FILES` | 该目录下 JSONL 文件数 |
+| `SAMPLES` | 当前总样本数（自动格式化 K/M） |
+| `Δ` | 自上次采样以来新增样本数 |
+| `RATE` | 产出速率（samples/s），绿=正常，黄=偏慢，红=停滞 |
+| `GAMES` | 每 worker 预期局数（自动从进程参数解析） |
+
+底部还有**速率分布条形图**，直观展示各设备的产出占比。
+
+> **工作原理**：脚本通过 `wc -l` 统计各输出目录下 JSONL 文件的总行数（每行一个样本），按采样间隔计算增量与速率。不修改任何文件，不占用 GPU，可放心在自博弈运行期间使用。
+>
+> **自动检测**：扫描 `ps aux` 输出中的 `selfplay.py` 进程，提取 `--output`（数据目录）、`--device`（设备）和 `--games`（局数）参数。进程启停后每约 1 分钟自动刷新源列表。
+>
+> **非交互环境**：管道或重定向时自动禁用颜色和清屏，输出为纯文本追加模式。也可通过 `--color never` 强制关闭。
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `-i`, `--interval` | 10 | 采样间隔（秒） |
+| `-d`, `--dir` | (自动检测) | 监控目录（可重复指定多个） |
+| `--once` | off | 单次采样后退出 |
+| `--color` | auto | `always` / `never` / `auto` |
