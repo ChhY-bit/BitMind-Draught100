@@ -173,9 +173,8 @@ def mcts_search(
         root.children[move.action_id] = MCTSNode(prior=float(priors[i]))
 
     # --- run simulations (sequential, one leaf expansion per sim) ---
-    # MCTS 核心循环
     for _ in range(config.num_simulations):
-        sim_env = env.clone()
+        sim_env = env.clone_bare()
         _simulate(root, sim_env, model, config, device)
 
     # --- aggregate results ---
@@ -249,26 +248,27 @@ def _simulate(
 ) -> None:
     """Run one MCTS simulation: selection → expansion → evaluation → backprop.
 
-    *env* is a clone that the simulation mutates (and discards afterwards).
+    *env* is a bare clone that the simulation mutates (and discards afterwards).
+    Uses ``step_bare()`` / ``is_terminal_bare()`` to avoid Python-level
+    observation encoding on every step.
     """
     node = root
-    # path records (parent_node, action_id) so we can update edge
-    # statistics during backprop.
     path: list[tuple[MCTSNode, int]] = []
+    done = False
 
     # ---- selection: walk down the existing tree ----
-    while node.children and not env.is_terminal():
+    while node.children:
         action_id = _select_child(node, config.c_puct)
         path.append((node, action_id))
-        _step_env(env, action_id)
+        done = env.step_bare(action_id)
         node = node.children[action_id]
+        if done:
+            break
 
     # ---- evaluation ----
-    # 获取局面估值（Value Head）
-    if env.is_terminal():
-        leaf_value = _terminal_value(env)
+    if done:
+        leaf_value = _terminal_value_bare(env)
     else:
-        # expansion + network evaluation
         legal_actions = env.legal_actions()
         if legal_actions:
             policy_logits, value = _infer_network(env, model, legal_actions, device)
@@ -277,16 +277,12 @@ def _simulate(
                 node.children[move.action_id] = MCTSNode(prior=float(priors[i]))
             leaf_value = value
         else:
-            # No legal moves but not terminal — treat as lost for current side
             leaf_value = -1.0
 
     # ---- backprop: walk up, flipping value at each level ----
-    # leaf_value is from the leaf player's perspective.
-    # Flip once to get the perspective of the player who made the
-    # last action (the edge leading to the leaf), then continue.
     v = leaf_value
     for parent, action_id in reversed(path):
-        v = -v  # switch to parent's perspective
+        v = -v
         child = parent.children[action_id]
         child.visit_count += 1
         child.total_value += v
@@ -427,16 +423,19 @@ def _infer_network(
 
 
 def _terminal_value(env) -> float:
-    """Return the value of a terminal position from the current player's view.
+    """Return the value of a terminal position from the current player's view."""
+    return _terminal_value_bare(env)
 
-    In draughts the game ends when the side to move has no legal moves
-    (they lose), or by draw (currently unimplemented in the engine).
-    """
-    raw = env.raw_observation()
+
+def _terminal_value_bare(env) -> float:
+    """Return terminal value using cached observation from ``step_bare()``.
+    Avoids the C ``observation()`` call that ``raw_observation()`` would make."""
+    raw = env._last_observation_dict
+    if raw is None:
+        raw = env.raw_observation()
     result = int(raw["game_result"])
-    if result == 3:  # DRAW
+    if result == 3:
         return 0.0
-    # The side to move has no moves → they lost.
     return -1.0
 
 

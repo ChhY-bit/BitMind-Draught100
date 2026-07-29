@@ -67,6 +67,8 @@ class StandardDraughtsEnv:
         return encode_observation(self._last_observation_dict)
 
     def raw_observation(self) -> Dict[str, object]:
+        if self._last_observation_dict is not None:
+            return dict(self._last_observation_dict)
         self._last_observation_dict = self._env.observation()
         return dict(self._last_observation_dict)
 
@@ -115,6 +117,30 @@ class StandardDraughtsEnv:
         cloned._last_observation_dict = cloned._env.observation()
         cloned._action_history = list(self._action_history)
         return cloned
+
+    def clone_bare(self) -> "StandardDraughtsEnv":
+        """Minimal clone for MCTS simulation — C clone only, no Python overhead."""
+        cloned = self.__class__.__new__(self.__class__)
+        cloned._library_path = self._library_path
+        cloned._env = self._env.clone()
+        cloned.max_actions = self.max_actions
+        cloned._last_observation_dict = None
+        cloned._action_history = []
+        return cloned
+
+    def step_bare(self, action_id: int) -> bool:
+        """Step for MCTS simulation — skip observation encoding and legal-actions
+        computation.  Returns ``True`` when the game is over (terminal)."""
+        observation_dict, step_info = self._env.step(action_id)
+        self._last_observation_dict = observation_dict
+        return bool(step_info["done"])
+
+    def is_terminal_bare(self) -> bool:
+        """Check terminal status using cached observation from last step_bare().
+        Avoids an extra C call.  Only valid after step_bare() or clone_bare()."""
+        if self._last_observation_dict is None:
+            return int(self._env.observation()["game_result"]) != DRAUGHTS_GAME_ONGOING
+        return int(self._last_observation_dict["game_result"]) != DRAUGHTS_GAME_ONGOING
 
     def action_history(self) -> List[int]:
         return list(self._action_history)
