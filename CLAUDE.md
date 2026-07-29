@@ -54,6 +54,7 @@ gui/                      Tkinter 棋盘（人机对弈、AI 观战）
 | 指定 GPU 序号 | `--device cuda:0`（GPU 0）、`--device cuda:1`（GPU 1），或 `CUDA_VISIBLE_DEVICES=1 ... --device cuda` |
 | 基座网络在哪 | `trainer/checkpoints/candidate_move_net_best.pt` |
 | MCTS 参数在哪 | `draughts/config/mcts_selfplay.yaml`（自博弈）和 `mcts.yaml`（评测/实战） |
+| 加速推理 | `model.yaml` 中 `use_fp16: true`（~1.5-2x）和 `use_compile: true`（~20-40%）；`mcts.yaml` 中 `batch_size: 4-8`（批量叶子推理，~2-3x GPU 吞吐提升） |
 | 当前网络棋力 | 见 [PROGRESS.md](PROGRESS.md) 的棋力层级图 |
 
 ## 常用命令速查

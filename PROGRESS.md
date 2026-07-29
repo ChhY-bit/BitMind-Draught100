@@ -26,7 +26,7 @@
 | `env.py` | 训练环境，6×10×10 当前方视角编码，局面克隆 | ✅ |
 | `model.py` | CandidateMoveNet：CNN encoder + policy head + value head | ✅ |
 | `agents.py` | 4 个智能体（见下方阵容表），统一工厂函数 | ✅ |
-| `mcts.py` | MCTS + PUCT 搜索，visit count 输出可作训练软标签 | ✅ |
+| `mcts.py` | MCTS + PUCT 搜索，支持批量叶子推理（虚拟损失），visit count 输出可作训练软标签 | ✅ |
 | `move_encoding.py` | 走法 → 45 维特征向量 | ✅ |
 | `dataset.py` | JSONL 加载、内存缓存、worker 内 tensor 拼批、软标签支持 | ✅ |
 

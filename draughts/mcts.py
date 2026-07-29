@@ -35,10 +35,13 @@ class MCTSConfig:
     dirichlet_alpha: float = 0.3
     dirichlet_epsilon: float = 0.25
     add_noise: bool = True
+    batch_size: int = 1
 
     def validate(self) -> None:
         if self.num_simulations <= 0:
             raise ValueError("num_simulations must be positive")
+        if self.batch_size <= 0:
+            raise ValueError("batch_size must be positive")
         if self.c_puct < 0:
             raise ValueError("c_puct must be non-negative")
         if self.temperature < 0:
@@ -69,6 +72,7 @@ class MCTSNode:
     prior: float = 0.0
     visit_count: int = 0
     total_value: float = 0.0
+    virtual_loss_count: int = 0
     children: dict[int, MCTSNode] = field(default_factory=dict)
 
     # Q(s,a)项的定义
@@ -172,10 +176,58 @@ def mcts_search(
     for i, move in enumerate(legal_actions):
         root.children[move.action_id] = MCTSNode(prior=float(priors[i]))
 
-    # --- run simulations (sequential, one leaf expansion per sim) ---
-    for _ in range(config.num_simulations):
-        sim_env = env.clone_bare()
-        _simulate(root, sim_env, model, config, device)
+    # --- run simulations in batches ---
+    batch_size = config.batch_size
+    remaining = config.num_simulations
+
+    while remaining > 0:
+        n = min(batch_size, remaining)
+
+        # Phase 1: collect n leaves (selection with virtual loss)
+        leaf_data: list[tuple[MCTSNode, list[tuple[MCTSNode, int]], object, bool]] = []
+        for _ in range(n):
+            sim_env = env.clone_bare()
+            leaf_node, path, is_terminal = _collect_leaf(root, sim_env, config.c_puct)
+            leaf_data.append((leaf_node, path, sim_env, is_terminal))
+
+        # Phase 2: categorize leaves — terminal vs. needing network inference
+        leaf_values: list[float | None] = [None] * n
+        batch_envs: list[object] = []
+        batch_legal: list[list] = []
+        batch_map: list[int] = []  # maps batch position → leaf_data index
+
+        for i, (_leaf_node, _path, sim_env, is_terminal) in enumerate(leaf_data):
+            if is_terminal:
+                leaf_values[i] = _terminal_value_bare(sim_env)
+            else:
+                moves = sim_env.legal_actions()
+                if not moves:
+                    leaf_values[i] = -1.0
+                else:
+                    batch_envs.append(sim_env)
+                    batch_legal.append(moves)
+                    batch_map.append(i)
+
+        # Phase 3: batch inference for all non-terminal leaves
+        if batch_envs:
+            output = _batch_infer(batch_envs, batch_legal, model, device)
+            for j, i in enumerate(batch_map):
+                leaf_node, _path, _sim_env, _is_terminal = leaf_data[i]
+                leaf_moves = batch_legal[j]
+                policy_logits = output["policy_logits"][j, : len(leaf_moves)]
+                leaf_values[i] = float(output["value"][j].item())
+
+                priors = _softmax(policy_logits)
+                for k, move in enumerate(leaf_moves):
+                    leaf_node.children[move.action_id] = MCTSNode(prior=float(priors[k]))
+
+        # Phase 4: backprop all leaves (removes virtual loss, records real values)
+        for i, (_leaf_node, path, _sim_env, _is_terminal) in enumerate(leaf_data):
+            if leaf_values[i] is None:
+                raise RuntimeError(f"leaf {i} has no value — this is a bug")
+            _backprop_batch(path, leaf_values[i])
+
+        remaining -= n
 
     # --- aggregate results ---
     visit_counts: dict[int, int] = {}
@@ -239,54 +291,52 @@ class _null_context:
 # ---------------------------------------------------------------------------
 
 
-def _simulate(
+def _collect_leaf(
     root: MCTSNode,
     env,
-    model: CandidateMoveNet,
-    config: MCTSConfig,
-    device: torch.device,
-) -> None:
-    """Run one MCTS simulation: selection → expansion → evaluation → backprop.
+    c_puct: float,
+) -> tuple[MCTSNode, list[tuple[MCTSNode, int]], bool]:
+    """Walk from *root* down to a leaf, applying virtual loss at each edge.
 
-    *env* is a bare clone that the simulation mutates (and discards afterwards).
-    Uses ``step_bare()`` / ``is_terminal_bare()`` to avoid Python-level
-    observation encoding on every step.
+    Returns:
+        ``(leaf_node, path, is_terminal)`` where *path* is a list of
+        ``(parent_node, action_id)`` pairs recording the walk and
+        *is_terminal* is ``True`` when the game ended during the walk.
     """
     node = root
     path: list[tuple[MCTSNode, int]] = []
     done = False
 
-    # ---- selection: walk down the existing tree ----
     while node.children:
-        action_id = _select_child(node, config.c_puct)
+        action_id = _select_child(node, c_puct)
+        child = node.children[action_id]
+        child.virtual_loss_count += 1
         path.append((node, action_id))
         done = env.step_bare(action_id)
-        node = node.children[action_id]
+        node = child
         if done:
             break
 
-    # ---- evaluation ----
-    if done:
-        leaf_value = _terminal_value_bare(env)
-    else:
-        legal_actions = env.legal_actions()
-        if legal_actions:
-            policy_logits, value = _infer_network(env, model, legal_actions, device)
-            priors = _softmax(policy_logits)
-            for i, move in enumerate(legal_actions):
-                node.children[move.action_id] = MCTSNode(prior=float(priors[i]))
-            leaf_value = value
-        else:
-            leaf_value = -1.0
+    return node, path, done
 
-    # ---- backprop: walk up, flipping value at each level ----
+
+def _backprop_batch(
+    path: list[tuple[MCTSNode, int]],
+    leaf_value: float,
+) -> None:
+    """Back-propagate *leaf_value* along *path*, removing virtual loss.
+
+    Virtual loss counters that were incremented during leaf collection
+    are decremented here, and real visit / value statistics are recorded
+    on each traversed edge (from the parent's perspective).
+    """
     v = leaf_value
     for parent, action_id in reversed(path):
         v = -v
         child = parent.children[action_id]
+        child.virtual_loss_count -= 1
         child.visit_count += 1
         child.total_value += v
-    root.visit_count += 1
 
 
 # ---------------------------------------------------------------------------
@@ -294,18 +344,29 @@ def _simulate(
 # ---------------------------------------------------------------------------
 
 
-# PUCT 公式
+# PUCT 公式（含虚拟损失）
 def _select_child(node: MCTSNode, c_puct: float) -> int:
-    """Choose the child with the highest PUCT score."""
-    total_visits = sum(c.visit_count for c in node.children.values())
-    # Use sqrt(total_visits) if there have been visits, else 0.
+    """Choose the child with the highest PUCT score.
+
+    Accounts for ``virtual_loss_count`` so that parallel selection paths
+    within the same batch are steered toward different branches.  When
+    ``virtual_loss_count`` is 0 on every child this reduces to the
+    classic PUCT formula.
+    """
+    total_visits = sum(c.visit_count + c.virtual_loss_count for c in node.children.values())
     sqrt_total = math.sqrt(max(total_visits, 1))
 
     best_action = -1
     best_score = -float("inf")
     for action_id, child in node.children.items():
-        exploit = child.q()
-        explore = c_puct * child.prior * sqrt_total / (1.0 + child.visit_count)
+        effective_n = child.visit_count + child.virtual_loss_count
+        if effective_n > 0:
+            # virtual loss = -1: each pending eval is assumed to be a loss
+            effective_q = (child.total_value - child.virtual_loss_count) / effective_n
+        else:
+            effective_q = 0.0
+        exploit = effective_q
+        explore = c_puct * child.prior * sqrt_total / (1.0 + effective_n)
         score = exploit + explore
         if score > best_score:
             best_score = score
@@ -488,6 +549,7 @@ def load_mcts_config(config_path: Optional[str] = None) -> MCTSConfig:
         "dirichlet_alpha": default_config.dirichlet_alpha,
         "dirichlet_epsilon": default_config.dirichlet_epsilon,
         "add_noise": default_config.add_noise,
+        "batch_size": default_config.batch_size,
     }
     values = dict(defaults)
     values.update(_load_scalar_yaml(path, defaults, "mcts"))
