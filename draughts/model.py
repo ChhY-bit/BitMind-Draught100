@@ -31,6 +31,9 @@ class ModelConfig:
     # 推理加速选项（默认关闭，自博弈时可开启）
     use_fp16: bool = False       # FP16 混合精度推理，约 1.5-2× 加速
     use_compile: bool = False    # torch.compile 算子熔合（需 PyTorch >= 2.0）
+    # V3 架构选项（默认关闭 = v2 兼容，开启后走深卷积 + 全局池化路径）
+    use_global_pool: bool = False  # 用 AdaptiveAvgPool2d 替代 Flatten + 大 FC
+    use_batch_norm: bool = True    # 卷积层后加 BatchNorm2d（use_global_pool=True 时生效）
 
 
 class CandidateMoveNet(nn.Module):
@@ -104,6 +107,17 @@ class CandidateMoveNet(nn.Module):
 
 
 def build_board_encoder(config: ModelConfig) -> nn.Sequential:
+    """Build the board encoder sub-network.
+
+    Two modes, selected by ``config.use_global_pool``:
+
+    * ``False`` (default, v2): conv stack → Flatten → large FC → ReLU.
+      Backward-compatible with all existing checkpoints.
+    * ``True`` (v3): deeper conv stack with BatchNorm → AdaptiveAvgPool2d(1)
+      → small FC → ReLU.  Eliminates the 13.1M-parameter Flatten→FC
+      bottleneck; every spatial position contributes a global receptive
+      field (11×11 with 5 layers).
+    """
     layers: list[nn.Module] = []
     in_channels = config.board_channels
     for _index in range(config.conv_layers):
@@ -115,18 +129,28 @@ def build_board_encoder(config: ModelConfig) -> nn.Sequential:
                 padding=config.conv_padding,
             )
         )
+        if config.use_global_pool and config.use_batch_norm:
+            layers.append(nn.BatchNorm2d(config.conv_channels))
         layers.append(nn.ReLU())
         in_channels = config.conv_channels
-    layers.extend(
-        [
-            nn.Flatten(),
+
+    if config.use_global_pool:
+        # V3: global average pooling collapses spatial dims → small FC
+        layers.append(nn.AdaptiveAvgPool2d(1))
+        layers.append(nn.Flatten())
+        layers.append(nn.Linear(config.conv_channels, config.board_feature_dim))
+        layers.append(nn.ReLU())
+    else:
+        # V2: Flatten → large FC (backward-compatible)
+        layers.append(nn.Flatten())
+        layers.append(
             nn.Linear(
                 config.conv_channels * config.board_size * config.board_size,
                 config.board_feature_dim,
-            ),
-            nn.ReLU(),
-        ]
-    )
+            )
+        )
+        layers.append(nn.ReLU())
+
     return nn.Sequential(*layers)
 
 
@@ -146,6 +170,8 @@ def load_model_config(config_path: Optional[str] = None) -> ModelConfig:
         "hidden_dim": default_config.hidden_dim,
         "use_fp16": default_config.use_fp16,
         "use_compile": default_config.use_compile,
+        "use_global_pool": default_config.use_global_pool,
+        "use_batch_norm": default_config.use_batch_norm,
     }
     values = dict(defaults)
     values.update(_load_model_yaml(path, defaults))

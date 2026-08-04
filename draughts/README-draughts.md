@@ -76,7 +76,7 @@ output = model(observation, move_features, move_mask)
 # → {"policy_logits": Tensor[B, M], "value": Tensor[B]}
 ```
 
-架构：CNN 板面编码器（3 层卷积 → 256 维） + MLP 动作编码器（45→128） + score_head（256+128→1） + value_head（256→1 + Tanh）。
+架构：CNN 板面编码器（v2: 3 层卷积 + Flatten + 大 FC；v3: 5 层 Conv→BN→ReLU + 全局池化 + 小 FC） + MLP 动作编码器（45→256） + score_head（512+256→1） + value_head（512→256→1 + Tanh）。通过 `use_global_pool` 配置项切换 v2/v3。
 
 ### `draughts.agents`
 

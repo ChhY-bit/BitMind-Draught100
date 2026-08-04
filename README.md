@@ -153,7 +153,7 @@ engine/          C 规则引擎（棋规唯一真源，不修改）
 interface/       C↔Python ctypes 桥接（稳定层，不修改）
 draughts/        核心 Python 库
   ├── env.py             训练环境（局面编码、走子、克隆）
-  ├── model.py           神经网络（CandidateMoveNet）
+  ├── model.py           神经网络（CandidateMoveNet，v2/v3 双模架构）
   ├── agents.py          智能体
   ├── mcts.py            MCTS 搜索（PUCT + 网络引导）
   ├── move_encoding.py   走法向量化
@@ -336,3 +336,4 @@ done
 - 走法编码仍在 Python 层，C 层向量化可进一步提升速度
 - 数据集默认全量载入内存，大数据集务必使用 `--no-cache` 避免 OOM
 - 训练仅支持单 GPU；多卡自博弈需手动启动进程隔离（`CUDA_VISIBLE_DEVICES` + 多进程）
+- v3 架构（~2.9M 参数）已就绪，通过 `model.yaml` 中 `use_global_pool: true` + `conv_layers: 5` 切换，推理更快、数据需求更低，待训练验证后可能成为新默认

@@ -16,7 +16,7 @@ engine/                   C 规则引擎 — 棋规在此，不在此层之上�
 interface/                C→Python 桥接 — 编译为 libdraughts.so，Python 用 ctypes 加载
 draughts/                 核心 Python 库
   ├── env.py                StandardDraughtsEnv（局面管理、走子、克隆）
-  ├── model.py              CandidateMoveNet（CNN 编码器 + policy head + value head）
+  ├── model.py              CandidateMoveNet（v2/v3 双模架构：CNN 编码器 + policy head + value head）
   ├── agents.py             所有智能体（4 种，统一通过 make_agent() 创建）
   ├── mcts.py               MCTS 搜索（PUCT 公式）
   ├── move_encoding.py      走法 → 固定维度特征向量
@@ -54,8 +54,8 @@ gui/                      Tkinter 棋盘（人机对弈、AI 观战）
 | 指定 GPU 序号 | `--device cuda:0`（GPU 0）、`--device cuda:1`（GPU 1），或 `CUDA_VISIBLE_DEVICES=1 ... --device cuda` |
 | 基座网络在哪 | `trainer/checkpoints/candidate_move_net_best.pt` |
 | MCTS 参数在哪 | `draughts/config/mcts_selfplay.yaml`（自博弈）和 `mcts.yaml`（评测/实战） |
-| 加速推理 | 首选 CLI flag：`--fp16`（~1.5-2x）和 `--compile`（~20-40%），无需修改 checkpoint；备选：`model.yaml` 中 `use_fp16: true` + `use_compile: true`；MCTS 再加 `mcts_selfplay.yaml` 中 `batch_size: 4-8`（批量叶子推理，~2-3x） |
-| 当前网络棋力 | 见 [PROGRESS.md](PROGRESS.md) 的棋力层级图 |
+| 加速推理 | 首选 CLI flag：`--fp16`（~1.5-2x）和 `--compile`（~20-40%），无需修改 checkpoint；备选：`model.yaml` 中 `use_fp16: true` + `use_compile: true`；MCTS 再加 `mcts_selfplay.yaml` 中 `batch_size: 4-8`（批量叶子推理，~2-3x）。v3 架构（~2.9M 参数，`use_global_pool: true`）推理速度再快 ~20-40% |
+| 当前网络棋力 | 见 [PROGRESS.md](PROGRESS.md) 的棋力层级图。v3 架构已就绪（~2.9M 参数），待训练验证 |
 
 ## 常用命令速查
 

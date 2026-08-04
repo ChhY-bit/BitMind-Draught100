@@ -1,5 +1,6 @@
-# CandidateMoveNet 神经网络结构参数（v2 — ~15M 参数）。
+# CandidateMoveNet 神经网络结构参数（默认 v3 — ~2.97M 参数，通过 use_global_pool 可切回 v2）。
 #
+# ==== v2（默认，use_global_pool: false）====
 # 参数量估算：
 #   Conv 层:    6→256 + 256→256 + 256→256  ≈ 1.18M
 #   Board FC:   256×10×10 → 512              ≈ 13.1M
@@ -8,19 +9,38 @@
 #   Value head: 512→256→1                    ≈ 0.16M
 #   合计:                                     ≈ 14.8M
 #
-# 推荐训练数据量：3M–5M 样本。
+# ==== v3（use_global_pool: true, conv_layers: 5, use_batch_norm: true）====
+# 参数量估算：
+#   Conv 层:    6→256 + 4×(256→256)          ≈ 2.37M
+#   BN 层:      5×256×2 (γ,β)                ≈ 0.003M
+#   Board FC:   256→512                       ≈ 0.13M
+#   Move enc:   45→256→256                    ≈ 0.09M
+#   Score head: (512+256)→256→1               ≈ 0.22M
+#   Value head: 512→256→1                     ≈ 0.16M
+#   合计:                                      ≈ 2.97M
+#
+# 推荐训练数据量：v2: 3M–5M 样本；v3: 2M–4M 样本（参数更少、BN 正则化 → 数据需求更低）。
 # 低于 2M 时建议提高 value_loss_weight 至 0.3 以抑制过拟合；
 # 低于 1M 时不建议使用此配置，回退到 v1（conv_channels=64 等）。
 board_channels: 6
 board_size: 10
 conv_channels: 256
-conv_layers: 3
+conv_layers: 5
 conv_kernel_size: 3
 conv_padding: 1
 board_feature_dim: 512
 move_feature_dim: 45
 move_embedding_dim: 256
 hidden_dim: 256
+
+# ── V3 架构选项 ───────────────────────────────────────────────────────────
+# use_global_pool: 用 AdaptiveAvgPool2d + 小 FC 替代 Flatten + 大 FC（13.1M→131K）
+#   设为 true 后需同步修改 conv_layers: 5、use_batch_norm: true（推荐 v3 配置）
+#   默认 true = v3 模式；旧 v2 checkpoint 自动携带 use_global_pool: false，无需修改 yaml
+use_global_pool: true
+# use_batch_norm: 卷积层后加 BatchNorm2d（仅 use_global_pool=true 时生效）
+#   推理时可与 Conv 融合（folding），零额外开销
+use_batch_norm: true
 
 # ── 推理加速选项（默认关闭，可通过 CLI 运行时覆盖）──────────────────────────
 # use_fp16: 混合精度推理（FP16），约 1.5-2× 加速。

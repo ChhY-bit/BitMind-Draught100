@@ -79,13 +79,23 @@ MCTS 自博弈时，搜索返回的 visit count 分布自动写入 JSONL 的 `po
 
 ## 网络版本
 
-| 版本 | 参数 | 状态 |
-|------|------|------|
-| v1 | ~1.8M（conv=64, board=256, hidden=128） | 已退役（round1–7） |
-| v2 | ~15M（conv=256, board=512, hidden=256） | 当前使用 |
-| 配置文件 | `draughts/config/model.yaml` | — |
+| 版本 | 参数 | 架构 | 状态 |
+|------|------|------|------|
+| v1 | ~1.8M（conv=64, board=256, hidden=128） | 3 层 conv + Flatten + 大 FC | 已退役（round1–7） |
+| v2 | ~15M（conv=256, board=512, hidden=256） | 3 层 conv + Flatten + 大 FC | 当前使用 |
+| v3 | ~2.9M（conv=256×5, board=512, BN, 全局池化） | 5 层 Conv→BN→ReLU + AdaptiveAvgPool2d + 小 FC | 架构就绪，待训练验证 |
+| 配置文件 | `draughts/config/model.yaml` | — | — |
 
-v2 推荐训练数据量 **3M–5M 样本**。checkpoint 内保存 `model_config`，不同版本可同台对战，旧 checkpoint 无需重新训练即可在 GUI/arena 中加载。
+### v3 架构要点
+
+v3 的核心改进是用**深卷积 + 全局平均池化**替代 v2 的 Flatten + 大 FC（13.1M → 131K 参数）：
+
+- **5 层 3×3 卷积**：感受野 11×11，覆盖全部 10×10 棋盘（v2：3 层，感受野 7×7，仅覆盖 49%）
+- **BatchNorm**：每层 Conv→BN→ReLU，保证 5 层深度下梯度畅通；推理时与 Conv 融合（零开销）
+- **AdaptiveAvgPool2d**：汇总 100 个全局视角为固定向量，参数减少 80%，正则化更强
+- **向后兼容**：`use_global_pool: false`（默认）走 v2 路径，旧 checkpoint 无需修改；设为 `true` 即切换 v3
+
+v2 推荐训练数据量 **3M–5M 样本**，v3 推荐 **2M–4M 样本**（参数更少、BN 正则化 → 数据需求更低）。checkpoint 内保存 `model_config`，v1/v2/v3 可同台对战，旧 checkpoint 无需重新训练即可在 GUI/arena 中加载。
 
 ## 已训练网络
 
