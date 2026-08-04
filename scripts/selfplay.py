@@ -41,6 +41,8 @@ class SelfPlayConfig:
     device: Optional[str] = None
     append: int = 0
     auto_output_name: int = 1
+    fp16: int = 0
+    compile: int = 0
 
 
 @dataclass
@@ -92,6 +94,8 @@ def generate_dataset(
     append: bool = False,
     auto_output_name: bool = False,
     opening_random_plies: int = 0,
+    force_fp16: bool = False,
+    force_compile: bool = False,
 ) -> SelfPlayStats:
     if games <= 0:
         raise ValueError("games must be positive")
@@ -113,6 +117,8 @@ def generate_dataset(
         supervised_checkpoint_path=black_checkpoint_path,
         mcts_config_path=mcts_config_path,
         device=device,
+        force_fp16=force_fp16,
+        force_compile=force_compile,
     )
     white_seed = None if seed is None else seed + 1
     white_agent = make_agent(
@@ -123,6 +129,8 @@ def generate_dataset(
         supervised_checkpoint_path=white_checkpoint_path,
         mcts_config_path=mcts_config_path,
         device=device,
+        force_fp16=force_fp16,
+        force_compile=force_compile,
     )
 
     if append and auto_output_name:
@@ -448,6 +456,18 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="If --output exists, write to output_001.jsonl, output_002.jsonl, etc.",
     )
+    parser.add_argument(
+        "--fp16",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable FP16 mixed-precision inference (overrides checkpoint config).",
+    )
+    parser.add_argument(
+        "--compile",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable torch.compile operator fusion (overrides checkpoint config).",
+    )
     cli_args = parser.parse_args()
     args = merge_selfplay_args(cli_args)
 
@@ -492,6 +512,8 @@ def merge_selfplay_args(cli_args: argparse.Namespace) -> argparse.Namespace:
         "device": cli_args.device,
         "append": cli_args.append,
         "auto_output_name": cli_args.auto_output_name,
+        "fp16": cli_args.fp16,
+        "compile": cli_args.compile,
     }
     for key, value in cli_overrides.items():
         if value is not None:
@@ -505,6 +527,8 @@ def merge_selfplay_args(cli_args: argparse.Namespace) -> argparse.Namespace:
     values["config"] = cli_args.config
     values["append"] = bool(int(values["append"]))
     values["auto_output_name"] = bool(int(values["auto_output_name"]))
+    values["fp16"] = bool(int(values["fp16"]))
+    values["compile"] = bool(int(values["compile"]))
     return argparse.Namespace(**values)
 
 
@@ -592,6 +616,8 @@ def main() -> None:
         append=args.append,
         auto_output_name=args.auto_output_name,
         opening_random_plies=args.opening_random_plies,
+        force_fp16=args.fp16,
+        force_compile=args.compile,
     )
 
 

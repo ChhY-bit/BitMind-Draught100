@@ -22,13 +22,16 @@ move_feature_dim: 45
 move_embedding_dim: 256
 hidden_dim: 256
 
-# ── 推理加速选项（默认关闭）──────────────────────────
+# ── 推理加速选项（默认关闭，可通过 CLI 运行时覆盖）──────────────────────────
 # use_fp16: 混合精度推理（FP16），约 1.5-2× 加速。
 #   自博弈场景推荐开启；评测/实战如需最高精度可关闭。
 #   对搜索质量的影响可忽略（15M 参数模型，数值范围安全）。
+#   ★ 推荐用法：不改此文件，在 selfplay.py/arena.py 上加 --fp16 运行时覆盖，
+#     无需重新训练 checkpoint 即刻生效。参见 CLAUDE.md 常用命令。
 use_fp16: false
 
 # use_compile: torch.compile 算子熔合（需 PyTorch >= 2.0），约 20-40% 额外加速。
 #   首次推理会有 2-5 秒编译延迟，后续自动复用。
 #   与 use_fp16 可叠加使用。dynamic=True 已内置（适应变长走法列表）。
+#   ★ 推荐用法：不改此文件，在 selfplay.py/arena.py 上加 --compile 运行时覆盖。
 use_compile: false

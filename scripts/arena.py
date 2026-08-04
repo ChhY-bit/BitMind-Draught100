@@ -33,6 +33,8 @@ class ArenaConfig:
     white_checkpoint: Optional[str] = None
     mcts_config: Optional[str] = None
     device: Optional[str] = None
+    fp16: int = 0
+    compile: int = 0
 
 
 @dataclass
@@ -141,6 +143,8 @@ def run_arena(
     mcts_config_path: Optional[str] = None,
     device: Optional[str] = None,
     opening_random_plies: int = 0,
+    force_fp16: bool = False,
+    force_compile: bool = False,
 ) -> ArenaStats:
     if games <= 0:
         raise ValueError("games must be positive")
@@ -159,6 +163,8 @@ def run_arena(
         supervised_checkpoint_path=black_checkpoint_path,
         mcts_config_path=mcts_config_path,
         device=device,
+        force_fp16=force_fp16,
+        force_compile=force_compile,
     )
     white_seed = None if seed is None else seed + 1
     white_agent = make_agent(
@@ -169,6 +175,8 @@ def run_arena(
         supervised_checkpoint_path=white_checkpoint_path,
         mcts_config_path=mcts_config_path,
         device=device,
+        force_fp16=force_fp16,
+        force_compile=force_compile,
     )
     stats = ArenaStats()
     start = time.perf_counter()
@@ -251,6 +259,18 @@ def parse_args() -> argparse.Namespace:
         default="draughts/config/mcts.yaml",
         help="YAML file for MCTSAgent parameters (default: mcts.yaml for deterministic play).",
     )
+    parser.add_argument(
+        "--fp16",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable FP16 mixed-precision inference (overrides checkpoint config).",
+    )
+    parser.add_argument(
+        "--compile",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable torch.compile operator fusion (overrides checkpoint config).",
+    )
     args = merge_arena_args(parser.parse_args())
 
     if args.games <= 0:
@@ -289,11 +309,15 @@ def merge_arena_args(cli_args: argparse.Namespace) -> argparse.Namespace:
         "white_checkpoint",
         "mcts_config",
         "device",
+        "fp16",
+        "compile",
     ):
         value = getattr(cli_args, key)
         if value is not None:
             values[key] = value
     values["config"] = cli_args.config
+    values["fp16"] = bool(int(values["fp16"]))
+    values["compile"] = bool(int(values["compile"]))
     return argparse.Namespace(**values)
 
 
@@ -338,6 +362,8 @@ def main() -> None:
         mcts_config_path=args.mcts_config,
         device=args.device,
         opening_random_plies=args.opening_random_plies,
+        force_fp16=args.fp16,
+        force_compile=args.compile,
     )
 
 

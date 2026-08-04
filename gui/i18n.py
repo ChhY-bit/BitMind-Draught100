@@ -94,6 +94,10 @@ _TRANSLATIONS = {
     "dialog_ft_pytorch":    {"zh": "PyTorch checkpoint",      "en": "PyTorch checkpoint"},
     "dialog_ft_all":        {"zh": "所有文件",                "en": "All files"},
     "dialog_ft_yaml":       {"zh": "YAML config",             "en": "YAML config"},
+    "dialog_fp16":          {"zh": "启用 FP16 混合精度推理（GPU 加速约 1.5-2×）",
+                             "en": "Enable FP16 mixed precision (~1.5-2× GPU speedup)"},
+    "dialog_compile":       {"zh": "启用 torch.compile 算子熔合（首次有编译延迟）",
+                             "en": "Enable torch.compile (first-run compilation delay)"},
 
     # ---- Player name templates ----
     "player_name":          {"zh": "{side}{kind}",             "en": "{side} {kind}"},

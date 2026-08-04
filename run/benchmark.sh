@@ -34,6 +34,7 @@ MAX_PLIES="${MAX_PLIES:-300}"
 LOG_INTERVAL="${LOG_INTERVAL:-5}"
 SEED="${SEED:-1234}"
 REPORT_DIR="${REPORT_DIR:-run}"
+COMPILE="${COMPILE:-1}"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 REPORT="${REPORT_DIR}/benchmark_${TIMESTAMP}.txt"
@@ -77,6 +78,9 @@ echo ""
 # 组名：ab_new / ab_old / old_new
 
 run_arena() {
+    # 推理加速（评测默认仅开启 compile，不开启 fp16 以保持最高精度）
+    local infer_flags=""
+    [ "$COMPILE" = "1" ] && infer_flags="$infer_flags --compile"
     local label="$1" device="$2" black="$3" white="$4"
     local black_ckpt="$5" white_ckpt="$6" seed="$7"
     local out="$TMPDIR/${label}.log"
@@ -96,6 +100,7 @@ run_arena() {
         --log-interval "$LOG_INTERVAL" \
         --device "$device" \
         --seed "$seed" \
+        $infer_flags \
         > "$out" 2>&1 &
     PIDS+=($!)
 }

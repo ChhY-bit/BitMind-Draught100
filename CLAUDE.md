@@ -54,7 +54,7 @@ gui/                      Tkinter 棋盘（人机对弈、AI 观战）
 | 指定 GPU 序号 | `--device cuda:0`（GPU 0）、`--device cuda:1`（GPU 1），或 `CUDA_VISIBLE_DEVICES=1 ... --device cuda` |
 | 基座网络在哪 | `trainer/checkpoints/candidate_move_net_best.pt` |
 | MCTS 参数在哪 | `draughts/config/mcts_selfplay.yaml`（自博弈）和 `mcts.yaml`（评测/实战） |
-| 加速推理 | `model.yaml` 中 `use_fp16: true`（~1.5-2x）和 `use_compile: true`（~20-40%）；`mcts.yaml` 中 `batch_size: 4-8`（批量叶子推理，~2-3x GPU 吞吐提升） |
+| 加速推理 | 首选 CLI flag：`--fp16`（~1.5-2x）和 `--compile`（~20-40%），无需修改 checkpoint；备选：`model.yaml` 中 `use_fp16: true` + `use_compile: true`；MCTS 再加 `mcts_selfplay.yaml` 中 `batch_size: 4-8`（批量叶子推理，~2-3x） |
 | 当前网络棋力 | 见 [PROGRESS.md](PROGRESS.md) 的棋力层级图 |
 
 ## 常用命令速查
@@ -66,16 +66,16 @@ make test && make interface-test && make all-python-test
 # 所有 Python 命令前加
 PYTHONPATH=interface:.
 
-# MCTS 自博弈（一步产出软标签训练数据）
+# MCTS 自博弈（一步产出软标签训练数据；--fp16 --compile 加速推理）
 python3 scripts/selfplay.py --black mcts --white mcts \
   --black-checkpoint ckpt.pt --white-checkpoint ckpt.pt \
   --games 2000 --opening-random-plies 6 --device cuda \
-  --mcts-config draughts/config/mcts_selfplay.yaml
+  --mcts-config draughts/config/mcts_selfplay.yaml --fp16 --compile
 
 # 从头训练（Phase 3 标准做法，不 resume）
 python3 trainer/train_supervised.py data.jsonl --no-cache --epochs 10 --device cuda
 
-# MCTS vs AlphaBeta 评测
+# MCTS vs AlphaBeta 评测（评测场景不推荐 --fp16，追求最高精度；--compile 可开）
 python3 scripts/arena.py --black mcts --white alphabeta \
   --black-checkpoint ckpt.pt --alphabeta-depth 3 --games 100 --device cuda
 ```

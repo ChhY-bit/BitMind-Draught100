@@ -12,6 +12,7 @@ from .mcts import (
     DEFAULT_MCTS_CONFIG_PATH,
     MCTSConfig,
     MCTSResult,
+    _maybe_autocast,
     load_mcts_config,
     mcts_search,
 )
@@ -167,6 +168,9 @@ class SupervisedAgent(Agent):
     checkpoint_path: str
     device: Optional[str] = None
     name: str = "supervised"
+    # 运行时覆盖（不修改 checkpoint 配置）
+    force_fp16: bool = False
+    force_compile: bool = False
 
     def __post_init__(self) -> None:
         if not self.checkpoint_path:
@@ -180,7 +184,12 @@ class SupervisedAgent(Agent):
         state_dict = checkpoint.get("model_state_dict", checkpoint)
         self.model.load_state_dict(state_dict)
         self.model.eval()
-        if self.model.config.use_compile and hasattr(torch, "compile"):
+        # 运行时覆盖：允许 CLI 强制开启推理加速，无需重新训练 checkpoint
+        if self.force_fp16:
+            self.model.config.use_fp16 = True
+        if self.force_compile and hasattr(torch, "compile"):
+            self.model = torch.compile(self.model, dynamic=True)
+        elif self.model.config.use_compile and hasattr(torch, "compile"):
             self.model = torch.compile(self.model, dynamic=True)
         self.last_policy_logits: Optional[List[float]] = None
         self.last_value: Optional[float] = None
@@ -198,7 +207,8 @@ class SupervisedAgent(Agent):
             raise ValueError("SupervisedAgent requires an environment with observation()")
 
         move_dicts = [move_to_dict(move) for move in legal_actions]
-        with torch.no_grad():
+        autocast_ctx = _maybe_autocast(self.model, self.device_obj)
+        with torch.no_grad(), autocast_ctx:
             observation_tensor = torch.tensor(
                 [env.observation()],
                 dtype=torch.float32,
@@ -226,6 +236,9 @@ class MCTSAgent(Agent):
     config_path: Optional[str] = None
     device: Optional[str] = None
     name: str = "mcts"
+    # 运行时覆盖（不修改 checkpoint 配置）
+    force_fp16: bool = False
+    force_compile: bool = False
 
     def __post_init__(self) -> None:
         if not self.checkpoint_path:
@@ -242,7 +255,12 @@ class MCTSAgent(Agent):
         state_dict = checkpoint.get("model_state_dict", checkpoint)
         self.model.load_state_dict(state_dict)
         self.model.eval()
-        if self.model.config.use_compile and hasattr(torch, "compile"):
+        # 运行时覆盖：允许 CLI 强制开启推理加速，无需重新训练 checkpoint
+        if self.force_fp16:
+            self.model.config.use_fp16 = True
+        if self.force_compile and hasattr(torch, "compile"):
+            self.model = torch.compile(self.model, dynamic=True)
+        elif self.model.config.use_compile and hasattr(torch, "compile"):
             self.model = torch.compile(self.model, dynamic=True)
 
     def select_action(
@@ -413,6 +431,8 @@ def make_agent(
     supervised_checkpoint_path: Optional[str] = None,
     mcts_config_path: Optional[str] = None,
     device: Optional[str] = None,
+    force_fp16: bool = False,
+    force_compile: bool = False,
 ) -> Agent:
     normalized = name.strip().lower()
     if normalized == "random":
@@ -422,7 +442,12 @@ def make_agent(
     if normalized in {"supervised", "supervised-agent", "sl"}:
         if supervised_checkpoint_path is None:
             raise ValueError("supervised agent requires a checkpoint path")
-        return SupervisedAgent(checkpoint_path=supervised_checkpoint_path, device=device)
+        return SupervisedAgent(
+            checkpoint_path=supervised_checkpoint_path,
+            device=device,
+            force_fp16=force_fp16,
+            force_compile=force_compile,
+        )
     if normalized in {"mcts", "mcts-agent"}:
         if supervised_checkpoint_path is None:
             raise ValueError("mcts agent requires a checkpoint path (--supervised-checkpoint)")
@@ -430,6 +455,8 @@ def make_agent(
             checkpoint_path=supervised_checkpoint_path,
             config_path=mcts_config_path,
             device=device,
+            force_fp16=force_fp16,
+            force_compile=force_compile,
         )
     raise ValueError(f"unknown agent: {name}")
 

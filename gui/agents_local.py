@@ -9,6 +9,7 @@ import torch
 
 from draughts.agents import AlphaBetaAgent, MCTSAgent, SupervisedAgent
 from draughts.env import EncodedObservationAdapter, StandardDraughtsEnv
+from draughts.mcts import _maybe_autocast
 from draughts.move_encoding import encode_legal_moves, move_to_dict
 from draughts_env import DraughtsEnv, Move
 
@@ -64,9 +65,15 @@ class SupervisedPlayer:
     name: str
     checkpoint_path: str
     kind: str = "supervised"
+    force_fp16: bool = False
+    force_compile: bool = False
 
     def __post_init__(self) -> None:
-        self.agent = SupervisedAgent(self.checkpoint_path, device="cpu")
+        self.agent = SupervisedAgent(
+            self.checkpoint_path, device="cpu",
+            force_fp16=self.force_fp16,
+            force_compile=self.force_compile,
+        )
         self.last_analysis: PlayerAnalysis = PlayerAnalysis()
 
     def is_human(self) -> bool:
@@ -112,7 +119,8 @@ class SupervisedPlayer:
             return None
         adapter = EncodedObservationAdapter(gui_env)
         side = int(obs["side_to_move"])
-        with torch.no_grad():
+        autocast_ctx = _maybe_autocast(self.agent.model, self.agent.device_obj)
+        with torch.no_grad(), autocast_ctx:
             obs_t = torch.tensor(
                 [adapter.observation()], dtype=torch.float32,
                 device=self.agent.device_obj,
@@ -161,12 +169,16 @@ class MCTSPlayer:
     checkpoint_path: str
     config_path: Optional[str] = None
     kind: str = "mcts"
+    force_fp16: bool = False
+    force_compile: bool = False
 
     def __post_init__(self) -> None:
         self.agent = MCTSAgent(
             self.checkpoint_path,
             config_path=self.config_path,
             device="cpu",
+            force_fp16=self.force_fp16,
+            force_compile=self.force_compile,
         )
         self._search_env = StandardDraughtsEnv()
         self.last_analysis: PlayerAnalysis = PlayerAnalysis()

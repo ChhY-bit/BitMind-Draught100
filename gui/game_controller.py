@@ -108,6 +108,8 @@ class GameController:
         white_kind: str,
         checkpoint_paths: Optional[Dict[int, str]] = None,
         mcts_config_paths: Optional[Dict[int, str]] = None,
+        force_fp16: bool = False,
+        force_compile: bool = False,
     ) -> None:
         self.cancel_ai_job()
         checkpoint_paths = checkpoint_paths or {}
@@ -117,11 +119,13 @@ class GameController:
                 BLACK_SIDE, black_kind,
                 checkpoint_paths.get(BLACK_SIDE),
                 mcts_config_paths.get(BLACK_SIDE),
+                force_fp16, force_compile,
             ),
             WHITE_SIDE: self._make_player(
                 WHITE_SIDE, white_kind,
                 checkpoint_paths.get(WHITE_SIDE),
                 mcts_config_paths.get(WHITE_SIDE),
+                force_fp16, force_compile,
             ),
         }
         self.ai_paused = False
@@ -490,22 +494,31 @@ class GameController:
         for side in (BLACK_SIDE, WHITE_SIDE):
             player = self.players[side]
             kind = getattr(player, "kind", None)
+            fp16_on = getattr(player, "force_fp16", False)
+            compile_on = getattr(player, "force_compile", False)
+            flags = []
+            if fp16_on:
+                flags.append("FP16")
+            if compile_on:
+                flags.append("compile")
+            flag_str = f" ({', '.join(flags)})" if flags else ""
             if kind == "supervised":
                 self.app.log(
                     self.app._tr("log_model_loaded", name=player.name,
-                                 file=Path(player.checkpoint_path).name),
+                                 file=Path(player.checkpoint_path).name) + flag_str,
                     "info",
                 )
             elif kind == "mcts":
                 cfg = Path(player.config_path).name if player.config_path else "default"
                 self.app.log(
                     self.app._tr("log_model_loaded_mcts", name=player.name,
-                                 file=Path(player.checkpoint_path).name, cfg=cfg),
+                                 file=Path(player.checkpoint_path).name, cfg=cfg) + flag_str,
                     "info",
                 )
 
     def _make_player(self, side: int, kind: str, checkpoint_path: Optional[str] = None,
-                     mcts_config_path: Optional[str] = None):
+                     mcts_config_path: Optional[str] = None,
+                     force_fp16: bool = False, force_compile: bool = False):
         side_key = "side_black" if side == BLACK_SIDE else "side_white"
         side_label = self.app._tr(side_key)
         kind_label = self.app._tr(f"kind_{kind}")
@@ -518,11 +531,21 @@ class GameController:
         if kind == "supervised":
             if not checkpoint_path:
                 raise ValueError(self.app._tr("log_need_checkpoint", side=side_label))
-            return SupervisedPlayer(self.app._tr("player_name", side=side_label, kind=kind_label), checkpoint_path)
+            return SupervisedPlayer(
+                self.app._tr("player_name", side=side_label, kind=kind_label),
+                checkpoint_path,
+                force_fp16=force_fp16,
+                force_compile=force_compile,
+            )
         if kind == "mcts":
             if not checkpoint_path:
                 raise ValueError(self.app._tr("log_need_mcts_ckpt", side=side_label))
-            return MCTSPlayer(self.app._tr("player_name", side=side_label, kind=kind_label), checkpoint_path, mcts_config_path)
+            return MCTSPlayer(
+                self.app._tr("player_name", side=side_label, kind=kind_label),
+                checkpoint_path, mcts_config_path,
+                force_fp16=force_fp16,
+                force_compile=force_compile,
+            )
         return HumanPlayer(self.app._tr("player_name_human", side=side_label))
 
     def _select_start(

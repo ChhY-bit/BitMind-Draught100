@@ -717,8 +717,20 @@ class DraughtsApp(tk.Tk):
         )
         white_combo.grid(row=2, column=1, sticky="ew", pady=4)
 
+        # 推理加速复选框
+        fp16_var = tk.BooleanVar(value=False)
+        compile_var = tk.BooleanVar(value=False)
+        chk_fp16 = ttk.Checkbutton(
+            frame, text=self._tr("dialog_fp16"), variable=fp16_var,
+        )
+        chk_fp16.grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        chk_compile = ttk.Checkbutton(
+            frame, text=self._tr("dialog_compile"), variable=compile_var,
+        )
+        chk_compile.grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
         buttons = ttk.Frame(frame)
-        buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        buttons.grid(row=5, column=0, columnspan=2, sticky="e", pady=(12, 0))
 
         def _needs_checkpoint(kind: str) -> bool:
             return kind in ("supervised", "mcts")
@@ -756,6 +768,8 @@ class DraughtsApp(tk.Tk):
                 self.controller.start_new_game(
                     black_selected, white_selected,
                     checkpoint_paths, mcts_config_paths,
+                    force_fp16=fp16_var.get(),
+                    force_compile=compile_var.get(),
                 )
             except Exception as exc:
                 messagebox.showerror(self._tr("dialog_create_fail"), str(exc), parent=dialog)

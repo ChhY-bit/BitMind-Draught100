@@ -37,13 +37,22 @@ OUTPUT_DIR="${OUTPUT_DIR:-data/selfplay_cuda0}"
 NUM_WORKERS="${NUM_WORKERS:-12}"
 BASE_SEED="${BASE_SEED:-7021}"
 GAMES="${GAMES:-500}"
+FP16="${FP16:-1}"
+COMPILE="${COMPILE:-1}"
 
 mkdir -p "$OUTPUT_DIR"
+
+# 构建推理加速参数
+INFER_FLAGS=""
+[ "$FP16" = "1" ] && INFER_FLAGS="$INFER_FLAGS --fp16"
+[ "$COMPILE" = "1" ] && INFER_FLAGS="$INFER_FLAGS --compile"
 
 echo "=== GPU 0: $NUM_WORKERS workers × $GAMES games each ==="
 echo "    checkpoint: $CHECKPOINT"
 echo "    mcts config: $MCTS_CONFIG"
 echo "    output:      $OUTPUT_DIR"
+echo "    fp16:        $([ "$FP16" = "1" ] && echo 'on' || echo 'off')"
+echo "    compile:     $([ "$COMPILE" = "1" ] && echo 'on' || echo 'off')"
 
 for i in $(seq 0 $((NUM_WORKERS - 1))); do
     OMP_NUM_THREADS=2 PYTHONPATH=interface:. \
@@ -56,7 +65,8 @@ for i in $(seq 0 $((NUM_WORKERS - 1))); do
         --mcts-config "$MCTS_CONFIG" \
         --device cuda:0 \
         --output "$OUTPUT_DIR/selfplay_$(printf '%03d' "$i").jsonl" \
-        --seed $((BASE_SEED + i)) &
+        --seed $((BASE_SEED + i)) \
+        $INFER_FLAGS &
     PIDS+=($!)
 done
 
