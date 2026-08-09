@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 import torch
+torch.set_float32_matmul_precision("high")
 from torch import nn
 from torch.utils.data import DataLoader, Subset
 

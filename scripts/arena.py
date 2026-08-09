@@ -7,6 +7,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
 
+import torch
+torch.set_float32_matmul_precision("high")
+
 from draughts.agents import Agent, available_agents, make_agent
 from draughts.env import StandardDraughtsEnv
 from selfplay import load_scalar_yaml

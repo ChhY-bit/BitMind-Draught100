@@ -8,6 +8,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
+import torch
+torch.set_float32_matmul_precision("high")
+
 from draughts.agents import Agent, available_agents, make_agent
 from draughts_env import Move
 from draughts.env import StandardDraughtsEnv
