@@ -160,6 +160,25 @@ _TRANSLATIONS = {
                              "en": "{side} Supervised AI needs a checkpoint file"},
     "log_need_mcts_ckpt":   {"zh": "{side}MCTS AI需要选择 checkpoint 文件",
                              "en": "{side} MCTS AI needs a checkpoint file"},
+    # ---- Illegal move / forfeit dialog ----
+    "dialog_illegal_title":  {"zh": "非法操作",
+                              "en": "Illegal Move"},
+    "dialog_illegal_prompt": {"zh": "当前操作非法：{side} 在 {sq} 号位。\n\n"
+                                    "在正式比赛中，非法操作会被判负。\n"
+                                    "请选择：",
+                              "en": "Illegal move: {side} at #{sq}.\n\n"
+                                    "In formal play, an illegal move\n"
+                                    "will result in forfeiture.\n"
+                                    "Choose:"},
+    "btn_forfeit":           {"zh": "结束对局（判负）",
+                              "en": "Forfeit (Lose)"},
+    "btn_continue_game":     {"zh": "继续对局",
+                              "en": "Continue"},
+    "log_forfeit":           {"zh": "{loser} 因非法操作被判负，{winner} 获胜。",
+                              "en": "{loser} forfeits due to illegal move. {winner} wins."},
+    "notation_forfeit":      {"zh": "{loser} 判负",
+                              "en": "{loser} forfeits"},
+
     # -- value curve --
     "curve_frame":          {"zh": "估值曲线",                "en": "Value Curve"},
     "curve_empty":          {"zh": "(无 AI 参与，估值曲线不可用)",

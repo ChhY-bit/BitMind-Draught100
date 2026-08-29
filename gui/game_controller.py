@@ -17,7 +17,11 @@ from .agents_local import (
 )
 from .protocol import PlayerAnalysis
 from .utils import (
+    BLACK_KING,
+    BLACK_MAN,
     BLACK_SIDE,
+    WHITE_KING,
+    WHITE_MAN,
     WHITE_SIDE,
     find_move_by_action_id,
     format_move,
@@ -46,6 +50,7 @@ class GameController:
         self.ai_job: Optional[str] = None
         self._ai_generation: int = 0  # guards against stale thread results
         self._value_history: deque = deque(maxlen=300)
+        self._forfeit_winner: Optional[int] = None
 
     # -- value-curve helpers -----------------------------------------------
 
@@ -143,6 +148,7 @@ class GameController:
         self.notation_history = []
         self.turn_index = 0
         self._value_history.clear()
+        self._forfeit_winner = None
         self.app.clear_curve()
         if clear_log:
             self.app.clear_log()
@@ -194,6 +200,14 @@ class GameController:
             path_squares=path_squares,
         )
         self.app.update_status(observation, self.last_move)
+        # Override result display when the game ended via forfeit
+        if self._forfeit_winner is not None:
+            winner_key = (
+                "black_win" if self._forfeit_winner == BLACK_SIDE else "white_win"
+            )
+            self.app.status_vars["result"].set(
+                self.app._tr(f"result_{winner_key}")
+            )
         self.app.update_side_move_list(
             self.current_side(), legal_moves, self.candidate_moves, None,
         )
@@ -206,7 +220,7 @@ class GameController:
 
     def handle_square_click(self, square_id: int) -> None:
         observation = self.env.observation()
-        if observation["game_result_name"] != "ongoing":
+        if observation["game_result_name"] != "ongoing" or self._forfeit_winner is not None:
             self.app.log(self.app._tr("log_game_over_btn"), "warn")
             return
         if not self.current_player().is_human():
@@ -216,14 +230,22 @@ class GameController:
         moves = self.env.legal_moves()
         moves_by_start = group_moves_by_start(moves)
 
+        # ── First click: select a movable piece ──
         if self.selected_square is None:
-            self._select_start(square_id, moves_by_start)
+            if square_id in moves_by_start:
+                self._select_start(square_id, moves_by_start)
+            elif self._is_any_piece(square_id):
+                self._handle_illegal_piece(square_id)
+            else:
+                self._clear_selection("log_no_legal_moves")
             return
 
+        # ── Already have a selection ──
         if square_id == self.selected_square:
             self._clear_selection("log_selection_cancel")
             return
 
+        # Click on a landing square?
         landing_matches = [
             move for move in self.candidate_moves if move.path[-1] == square_id
         ]
@@ -239,11 +261,11 @@ class GameController:
             self.refresh()
             return
 
+        # Not a landing square — switch to a different movable piece?
         if square_id in moves_by_start:
             self._select_start(square_id, moves_by_start)
-            return
-
-        self._clear_selection("log_not_landing")
+        else:
+            self._handle_illegal_piece(square_id)
 
     def execute_move(self, move: Move, actor: Optional[str] = None) -> None:
         try:
@@ -278,6 +300,9 @@ class GameController:
 
     def undo_last_move(self) -> None:
         self.cancel_ai_job()
+        if self._forfeit_winner is not None:
+            self.app.log(self.app._tr("log_game_over_btn"), "warn")
+            return
         if not self.action_history:
             self.app.log(self.app._tr("log_no_undo"), "warn")
             self.schedule_ai_turn()
@@ -332,6 +357,9 @@ class GameController:
         action history up to *target_ply*, trims the value history, and
         marks the curve at the new current ply.
         """
+        if self._forfeit_winner is not None:
+            self.app.log(self.app._tr("log_game_over_btn"), "warn")
+            return
         target_ply = max(0, min(target_ply, len(self.action_history)))
         if target_ply == self.turn_index:
             return  # already there
@@ -477,7 +505,43 @@ class GameController:
     def current_player(self):
         return self.players[self.current_side()]
 
+    def _is_any_piece(self, square_id: int) -> bool:
+        """Return True if *square_id* holds any piece (own or opponent)."""
+        piece = int(self.env.observation()["squares"][square_id - 1])
+        return piece in (BLACK_MAN, BLACK_KING, WHITE_MAN, WHITE_KING)
+
+    def forfeit(self, side: int) -> None:
+        """Declare *side* as forfeited — the opponent wins.
+
+        Records the forfeit in the notation, logs it, and marks the
+        game as terminal so no further moves can be played.
+        """
+        self.cancel_ai_job()
+        winner = opponent_side(side)
+        self._forfeit_winner = winner
+        self.selected_square = None
+        self.candidate_moves = []
+
+        loser_name = self.app._tr(
+            "side_black" if side == BLACK_SIDE else "side_white"
+        )
+        winner_name = self.app._tr(
+            "side_black" if winner == BLACK_SIDE else "side_white"
+        )
+
+        self.turn_index += 1
+        self.notation_history.append(
+            self.app._tr("notation_forfeit", loser=loser_name, winner=winner_name)
+        )
+        self.app.log(
+            self.app._tr("log_forfeit", loser=loser_name, winner=winner_name),
+            "error",
+        )
+        self.refresh()
+
     def is_terminal(self) -> bool:
+        if self._forfeit_winner is not None:
+            return True
         return self.env.observation()["game_result_name"] != "ongoing"
 
     def mode_label(self) -> str:
@@ -553,10 +617,6 @@ class GameController:
         square_id: int,
         moves_by_start: Dict[int, List[Move]],
     ) -> None:
-        if square_id not in moves_by_start:
-            self._clear_selection("log_no_legal_moves")
-            return
-
         self.selected_square = square_id
         self.candidate_moves = moves_by_start[square_id]
         self.app.log(
@@ -565,6 +625,14 @@ class GameController:
             "info",
         )
         self.refresh()
+
+    def _handle_illegal_piece(self, square_id: int) -> None:
+        """Show the illegal-move dialog and act on the user's choice."""
+        forfeited = self.app.show_illegal_move_dialog(square_id)
+        if forfeited:
+            return  # forfeit() already handled everything
+        # User chose to continue — clear selection and keep playing
+        self._clear_selection("log_selection_cancel")
 
     def _clear_selection(self, key: str, **fmt) -> None:
         self.selected_square = None

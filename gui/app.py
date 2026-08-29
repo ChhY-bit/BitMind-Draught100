@@ -782,6 +782,102 @@ class DraughtsApp(tk.Tk):
         black_combo.focus_set()
         self.wait_window(dialog)
 
+    def show_illegal_move_dialog(self, square_id: int) -> bool:
+        """Show a modal dialog when a human clicks an immovable own piece.
+
+        Returns ``True`` if the user chose to forfeit, ``False`` to continue.
+        """
+        side = self.controller.current_side()
+        side_name = self._tr("side_black" if side == BLACK_SIDE else "side_white")
+
+        result: List[bool] = []  # mutable box to capture the choice
+
+        dialog = tk.Toplevel(self)
+        dialog.title(self._tr("dialog_illegal_title"))
+        dialog.transient(self)
+        dialog.resizable(False, False)
+
+        # Use the same CJK font family discovered at startup
+        _font = font.Font(family=self._cjk_family, size=12)
+
+        frame = ttk.Frame(dialog, padding=(24, 20, 24, 20))
+        frame.grid(row=0, column=0, sticky="nsew")
+
+        # Message — use tk.Label (not ttk) with explicit CJK font to avoid
+        # rendering issues on noXft Tk builds where the ttk style may not
+        # propagate to Toplevel children reliably.
+        tk.Label(
+            frame,
+            text=self._tr("dialog_illegal_prompt", side=side_name, sq=square_id),
+            wraplength=380,
+            justify="left",
+            font=_font,
+        ).grid(row=0, column=0, columnspan=2, pady=(0, 18))
+
+        # Buttons — also use tk buttons with explicit font for CJK safety
+        btn_forfeit = tk.Button(
+            frame,
+            text=self._tr("btn_forfeit"),
+            font=_font,
+            bg="#e74c3c", fg="white",
+            activebackground="#c0392b", activeforeground="white",
+            relief="flat", padx=14, pady=4,
+            command=lambda: (result.append(True), dialog.destroy()),
+        )
+        btn_forfeit.grid(row=1, column=0, sticky="e", padx=(0, 6))
+
+        btn_continue = tk.Button(
+            frame,
+            text=self._tr("btn_continue_game"),
+            font=_font,
+            bg="#27ae60", fg="white",
+            activebackground="#219a52", activeforeground="white",
+            relief="flat", padx=14, pady=4,
+            command=lambda: (result.append(False), dialog.destroy()),
+        )
+        btn_continue.grid(row=1, column=1, sticky="w", padx=(6, 0))
+
+        # Center the button row
+        frame.columnconfigure(0, weight=1)
+        frame.columnconfigure(1, weight=1)
+
+        # Keyboard shortcuts: Enter = continue, Escape = continue
+        dialog.bind("<Return>", lambda _e: (result.append(False), dialog.destroy()))
+        dialog.bind("<Escape>", lambda _e: (result.append(False), dialog.destroy()))
+        # Closing the window via WM = continue
+        dialog.protocol("WM_DELETE_WINDOW", lambda: (result.append(False), dialog.destroy()))
+
+        # Ensure the window is visible before grab_set (avoids "window not
+        # viewable" error on some window managers).  Also compute geometry
+        # to centre the dialog on the parent.
+        dialog.update_idletasks()
+        dialog.wait_visibility()
+        dialog.grab_set()
+
+        # Centre on parent
+        try:
+            pw = self.winfo_width()
+            ph = self.winfo_height()
+            px = self.winfo_rootx()
+            py = self.winfo_rooty()
+            dw = dialog.winfo_reqwidth()
+            dh = dialog.winfo_reqheight()
+            x = px + (pw - dw) // 2
+            y = py + (ph - dh) // 2
+            dialog.geometry(f"+{x}+{y}")
+        except Exception:
+            pass
+
+        dialog.lift()
+        btn_continue.focus_set()
+
+        self.wait_window(dialog)
+
+        forfeited = len(result) > 0 and result[0]
+        if forfeited:
+            self.controller.forfeit(side)
+        return forfeited
+
     def ask_checkpoint_path(self, title: str, parent: tk.Toplevel) -> Optional[str]:
         checkpoint_dir = _PROJECT_ROOT / "trainer" / "checkpoints"
         initial_dir = checkpoint_dir if checkpoint_dir.exists() else _PROJECT_ROOT
