@@ -17,6 +17,7 @@
 | `model.py` | 神经网络定义 | `CandidateMoveNet`, `ModelConfig`, `load_model_config` |
 | `agents.py` | 所有智能体类 | 4 个 Agent 类, `make_agent`, `available_agents` |
 | `mcts.py` | MCTS 搜索（PUCT） | `mcts_search`, `MCTSConfig`, `MCTSNode`, `MCTSResult` |
+| `notation.py` | 比赛 TXT 棋谱格式、完整走法记录与原子写入 | `GameRecord`, `format_move_notation`, `format_move_pairs`, `result_code` |
 | `dataset.py` | JSONL 加载、内存缓存、tensor 拼批 | `DraughtsJsonlDataset`, `collate_batch`, `to_torch_batch` |
 
 ## 依赖层次

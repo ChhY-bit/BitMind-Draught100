@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
 from typing import Dict, List, Optional, Sequence
 
 import torch
@@ -18,6 +19,7 @@ from .mcts import (
 )
 from .model import CandidateMoveNet, ModelConfig
 from .move_encoding import encode_legal_moves, move_to_dict, square_to_coord
+from .search_control import check_cancelled
 
 DEFAULT_ALPHABETA_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "alphabeta.yaml"
 
@@ -37,6 +39,8 @@ class Agent:
         observation: Dict[str, object],
         legal_actions: Sequence[Move],
         env=None,
+        *,
+        cancel_event: Optional[Event] = None,
     ) -> int:
         raise NotImplementedError
 
@@ -54,7 +58,10 @@ class RandomAgent(Agent):
         observation: Dict[str, object],
         legal_actions: Sequence[Move],
         env=None,
+        *,
+        cancel_event: Optional[Event] = None,
     ) -> int:
+        check_cancelled(cancel_event)
         if not legal_actions:
             raise ValueError("RandomAgent received no legal actions")
         return self._rng.choice(list(legal_actions)).action_id
@@ -91,7 +98,10 @@ class AlphaBetaAgent(Agent):
         observation: Dict[str, object],
         legal_actions: Sequence[Move],
         env=None,
+        *,
+        cancel_event: Optional[Event] = None,
     ) -> int:
+        check_cancelled(cancel_event)
         if not legal_actions:
             raise ValueError("AlphaBetaAgent received no legal actions")
         if env is None:
@@ -101,6 +111,7 @@ class AlphaBetaAgent(Agent):
         scored_moves = []
         ordered_actions = order_moves(legal_actions, observation)
         for move in ordered_actions:
+            check_cancelled(cancel_event)
             cloned = env.clone()
             cloned.step(move.action_id)
             score = self._search(
@@ -109,6 +120,7 @@ class AlphaBetaAgent(Agent):
                 root_side=root_side,
                 alpha=NEG_INF,
                 beta=POS_INF,
+                cancel_event=cancel_event,
             )
             scored_moves.append((score, move))
 
@@ -123,7 +135,9 @@ class AlphaBetaAgent(Agent):
         root_side: int,
         alpha: int,
         beta: int,
+        cancel_event: Optional[Event] = None,
     ) -> int:
+        check_cancelled(cancel_event)
         observation = env.raw_observation()
         result = int(observation["game_result"])
         if depth <= 0 or result != ONGOING:
@@ -142,7 +156,7 @@ class AlphaBetaAgent(Agent):
                 cloned.step(move.action_id)
                 value = max(
                     value,
-                    self._search(cloned, depth - 1, root_side, alpha, beta),
+                    self._search(cloned, depth - 1, root_side, alpha, beta, cancel_event),
                 )
                 alpha = max(alpha, value)
                 if alpha >= beta:
@@ -155,7 +169,7 @@ class AlphaBetaAgent(Agent):
             cloned.step(move.action_id)
             value = min(
                 value,
-                self._search(cloned, depth - 1, root_side, alpha, beta),
+                self._search(cloned, depth - 1, root_side, alpha, beta, cancel_event),
             )
             beta = min(beta, value)
             if alpha >= beta:
@@ -200,7 +214,10 @@ class SupervisedAgent(Agent):
         observation: Dict[str, object],
         legal_actions: Sequence[Move],
         env=None,
+        *,
+        cancel_event: Optional[Event] = None,
     ) -> int:
+        check_cancelled(cancel_event)
         if not legal_actions:
             raise ValueError("SupervisedAgent received no legal actions")
         if env is None:
@@ -221,6 +238,7 @@ class SupervisedAgent(Agent):
             )
             move_mask = torch.ones((1, len(legal_actions)), dtype=torch.float32, device=self.device_obj)
             output = self.model(observation_tensor, move_tensor, move_mask, return_latent=True)
+            check_cancelled(cancel_event)
             self.last_policy_logits = output["policy_logits"][0].tolist()
             self.last_value = float(output["value"][0].item())
             self.last_latent = output.get("latent")  # [1, M, 384]
@@ -268,7 +286,10 @@ class MCTSAgent(Agent):
         observation: Dict[str, object],
         legal_actions: Sequence[Move],
         env=None,
+        *,
+        cancel_event: Optional[Event] = None,
     ) -> int:
+        check_cancelled(cancel_event)
         if not legal_actions:
             raise ValueError("MCTSAgent received no legal actions")
         if env is None:
@@ -280,7 +301,9 @@ class MCTSAgent(Agent):
             self.mcts_config,
             self.device_obj,
             add_noise=self.mcts_config.add_noise,
+            cancel_event=cancel_event,
         )
+        check_cancelled(cancel_event)
         return self.last_result.selected_action(temperature=self.mcts_config.temperature)
 
 

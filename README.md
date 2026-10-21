@@ -42,7 +42,7 @@ make interface-test
 make all-python-test
 ```
 
-> `make all-python-test` 等价于依次执行 `make draughts-test`、`make trainer-test`、`make scripts-test`，逐层排查问题时可以单独跑某一个。日常开发改完代码后，一行跑完：`make interface-test && make all-python-test`
+> `make all-python-test` 等价于依次执行 `make draughts-test`、`make trainer-test`、`make scripts-test`、`make gui-test`，逐层排查问题时可以单独跑某一个。GUI 控制器测试无需图形显示器。日常开发改完代码后，一行跑完：`make interface-test && make all-python-test`
 
 ### 3. 阶段一：AlphaBeta 蒸馏训练
 

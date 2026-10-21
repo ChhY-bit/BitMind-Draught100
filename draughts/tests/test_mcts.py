@@ -320,11 +320,10 @@ class MCTSSearchTests(unittest.TestCase):
 
     def test_terminal_position_raises(self):
         """mcts_search should raise on a terminal position."""
-        # Force a terminal-like state — we step until game over.
-        # Since getting a real terminal is hard (random play takes long),
-        # we verify the guard: calling with no legal actions should fail.
-        # We'll test indirectly by calling on a fresh env (which is fine).
-        pass  # Fresh env has legal actions, so the "no actions" path is tested via ValueError
+        self.env.set_state([0] * 50, 0)
+        model = _make_mock_model([0.0], 0.0)
+        with self.assertRaisesRegex(ValueError, "terminal position"):
+            mcts_search(self.env, model, MCTSConfig(), self.device)
 
     def test_search_with_dirichlet_noise(self):
         """Search with Dirichlet noise enabled should still return valid results."""

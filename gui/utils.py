@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Sequence
 # C-level Move type — imported lazily by agents to avoid circular deps.
 # For type-checking convenience we re-export the name here.
 from draughts_env import Move  # noqa: F401
+from draughts.notation import format_move_notation
 
 # ---------------------------------------------------------------------------
 # Board geometry constants
@@ -88,4 +89,4 @@ def format_move(move: Optional[Move]) -> str:
 
 
 def make_notation(turn_index: int, move: Move) -> str:
-    return f"{turn_index}. {format_move(move)}"
+    return f"{(turn_index + 1) // 2}. {format_move_notation(move)}"

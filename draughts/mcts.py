@@ -4,6 +4,7 @@ import math
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Event
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import torch
@@ -17,6 +18,7 @@ from .move_encoding import (
 )
 from .model import CandidateMoveNet
 from .env import EMPTY, piece_channel
+from .search_control import check_cancelled
 
 DEFAULT_MCTS_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "mcts.yaml"
 
@@ -140,6 +142,7 @@ def mcts_search(
     device: torch.device,
     *,
     add_noise: bool = False,
+    cancel_event: Optional[Event] = None,
 ) -> MCTSResult:
     """Run MCTS from the position represented by *env*.
 
@@ -153,12 +156,15 @@ def mcts_search(
         device: ``torch.device`` for network inference.
         add_noise: If ``True``, add Dirichlet noise to the root prior
                    (enabled during self-play, disabled during match play).
+        cancel_event: Optional stop signal. Raises ``SearchCancelled``
+                      between tree steps and network inference calls.
 
     Returns:
         ``MCTSResult`` with visit-count distribution, root value, and
         normalised policy probabilities.
     """
     config.validate()
+    check_cancelled(cancel_event)
 
     legal_actions = env.legal_actions()
     if not legal_actions:
@@ -166,6 +172,7 @@ def mcts_search(
 
     # --- root network inference (for prior probabilities) ---
     policy_logits, _root_value = _infer_network(env, model, legal_actions, device)
+    check_cancelled(cancel_event)
     priors = _softmax(policy_logits)
 
     if add_noise:
@@ -181,13 +188,17 @@ def mcts_search(
     remaining = config.num_simulations
 
     while remaining > 0:
+        check_cancelled(cancel_event)
         n = min(batch_size, remaining)
 
         # Phase 1: collect n leaves (selection with virtual loss)
         leaf_data: list[tuple[MCTSNode, list[tuple[MCTSNode, int]], object, bool]] = []
         for _ in range(n):
+            check_cancelled(cancel_event)
             sim_env = env.clone_bare()
-            leaf_node, path, is_terminal = _collect_leaf(root, sim_env, config.c_puct)
+            leaf_node, path, is_terminal = _collect_leaf(
+                root, sim_env, config.c_puct, cancel_event
+            )
             leaf_data.append((leaf_node, path, sim_env, is_terminal))
 
         # Phase 2: categorize leaves — terminal vs. needing network inference
@@ -211,6 +222,7 @@ def mcts_search(
         # Phase 3: batch inference for all non-terminal leaves
         if batch_envs:
             output = _batch_infer(batch_envs, batch_legal, model, device)
+            check_cancelled(cancel_event)
             for j, i in enumerate(batch_map):
                 leaf_node, _path, _sim_env, _is_terminal = leaf_data[i]
                 leaf_moves = batch_legal[j]
@@ -295,6 +307,7 @@ def _collect_leaf(
     root: MCTSNode,
     env,
     c_puct: float,
+    cancel_event: Optional[Event] = None,
 ) -> tuple[MCTSNode, list[tuple[MCTSNode, int]], bool]:
     """Walk from *root* down to a leaf, applying virtual loss at each edge.
 
@@ -308,6 +321,7 @@ def _collect_leaf(
     done = False
 
     while node.children:
+        check_cancelled(cancel_event)
         action_id = _select_child(node, c_puct)
         child = node.children[action_id]
         child.virtual_loss_count += 1

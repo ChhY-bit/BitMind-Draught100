@@ -16,7 +16,7 @@ TEST_MOVES := $(BUILD_DIR)/test_moves
 RANDOM_PLAY := $(BUILD_DIR)/random_play
 BOARD_VIEWER := $(BUILD_DIR)/board_viewer
 
-.PHONY: all test random-test tools interface interface-test trainer-test clean
+.PHONY: all test random-test tools interface interface-test draughts-test trainer-test scripts-test gui-test all-python-test clean
 
 all: test tools
 
@@ -76,7 +76,10 @@ trainer-test: interface
 scripts-test: interface
 	PYTHONPATH=interface:.:scripts:draughts/tests python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 
-all-python-test: draughts-test trainer-test scripts-test
+gui-test: interface
+	PYTHONPATH=interface:.:scripts:draughts/tests python3 -m unittest discover -s gui/tests -p 'test_*.py'
+
+all-python-test: draughts-test trainer-test scripts-test gui-test
 
 clean:
 	rm -rf $(BUILD_DIR)

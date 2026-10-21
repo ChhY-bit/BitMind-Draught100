@@ -3,7 +3,9 @@ from __future__ import annotations
 import random
 import threading
 from collections import deque
+from dataclasses import dataclass, field
 from pathlib import Path
+from queue import Empty, Queue
 from typing import Dict, List, Optional, Sequence
 
 from draughts_env import DraughtsEnv, Move
@@ -14,7 +16,10 @@ from .agents_local import (
     MCTSPlayer,
     RandomPlayer,
     SupervisedPlayer,
+    available_devices,
 )
+from draughts.search_control import SearchCancelled
+from draughts.notation import GameRecord, result_code
 from .protocol import PlayerAnalysis
 from .utils import (
     BLACK_KING,
@@ -31,6 +36,17 @@ from .utils import (
 )
 
 
+@dataclass
+class _AITask:
+    generation: int
+    side: int
+    position: tuple
+    player: object
+    single_step: bool
+    cancel_event: threading.Event = field(default_factory=threading.Event)
+    results: Queue = field(default_factory=Queue)
+
+
 class GameController:
     def __init__(self, app: "DraughtsApp") -> None:
         self.app = app
@@ -44,11 +60,16 @@ class GameController:
         self.candidate_moves: List[Move] = []
         self.last_move: Optional[Move] = None
         self.action_history: List[int] = []
-        self.notation_history: List[str] = []
+        self.record = GameRecord()
         self.turn_index = 0
         self.ai_paused = False
         self.ai_job: Optional[str] = None
         self._ai_generation: int = 0  # guards against stale thread results
+        self._ai_task: Optional[_AITask] = None
+        self._ai_poll_job: Optional[str] = None
+        self._pending_ai_request: Optional[bool] = None
+        self._closing = False
+        self._accepted_analysis: Dict[int, PlayerAnalysis] = {}
         self._value_history: deque = deque(maxlen=300)
         self._forfeit_winner: Optional[int] = None
 
@@ -70,6 +91,8 @@ class GameController:
         the inferred value to the eval bar so it stays meaningful even
         during human turns (instead of defaulting to 50 %).
         """
+        if self._ai_task is not None:
+            return  # a cancelled worker may still be finishing an inference
         model_player = self._find_model_player()
         if model_player is None:
             return  # no AI in game → curve stays empty
@@ -93,6 +116,8 @@ class GameController:
         Used after undo / rewind to refresh the bar without adding a
         duplicate point to the value curve.
         """
+        if self._ai_task is not None:
+            return
         model_player = self._find_model_player()
         if model_player is None:
             return
@@ -115,24 +140,33 @@ class GameController:
         mcts_config_paths: Optional[Dict[int, str]] = None,
         force_fp16: bool = False,
         force_compile: bool = False,
+        device: str = "cpu",
+        first_player: str = "先手方",
+        second_player: str = "后手方",
     ) -> None:
         self.cancel_ai_job()
+        new_record = GameRecord(first_player=first_player, second_player=second_player)
+        new_record.to_text()  # validate metadata before replacing the current game
         checkpoint_paths = checkpoint_paths or {}
         mcts_config_paths = mcts_config_paths or {}
+        if {black_kind, white_kind} & {"mcts", "supervised"}:
+            if device not in available_devices():
+                raise ValueError(self.app._tr("dialog_device_unavailable", device=device))
         self.players = {
             BLACK_SIDE: self._make_player(
                 BLACK_SIDE, black_kind,
                 checkpoint_paths.get(BLACK_SIDE),
                 mcts_config_paths.get(BLACK_SIDE),
-                force_fp16, force_compile,
+                force_fp16, force_compile, device,
             ),
             WHITE_SIDE: self._make_player(
                 WHITE_SIDE, white_kind,
                 checkpoint_paths.get(WHITE_SIDE),
                 mcts_config_paths.get(WHITE_SIDE),
-                force_fp16, force_compile,
+                force_fp16, force_compile, device,
             ),
         }
+        self.record = new_record
         self.ai_paused = False
         self.app.update_pause_button(self.ai_paused)
         self.reset_current_game(clear_log=True)
@@ -145,10 +179,13 @@ class GameController:
         self.candidate_moves = []
         self.last_move = None
         self.action_history = []
-        self.notation_history = []
+        self.record = GameRecord(
+            first_player=self.record.first_player, second_player=self.record.second_player,
+        )
         self.turn_index = 0
         self._value_history.clear()
         self._forfeit_winner = None
+        self._accepted_analysis.clear()
         self.app.clear_curve()
         if clear_log:
             self.app.clear_log()
@@ -164,6 +201,7 @@ class GameController:
             self.players[BLACK_SIDE].kind,
             self.players[WHITE_SIDE].kind,
         )
+        self.schedule_ai_turn()
 
     def toggle_pause(self) -> None:
         self.ai_paused = not self.ai_paused
@@ -184,7 +222,7 @@ class GameController:
         if player.is_human():
             self.app.log(self.app._tr("log_human_no_ai_step"), "warn")
             return
-        self.perform_ai_move()
+        self.perform_ai_move(single_step=True)
 
     def refresh(self) -> None:
         observation = self.env.observation()
@@ -212,7 +250,10 @@ class GameController:
             self.current_side(), legal_moves, self.candidate_moves, None,
         )
         self.app._highlight_active_side(self.current_side())
-        self.app.update_notation(self.notation_history)
+        notation = self.notation_history
+        if self.record.result != "*":
+            notation.append(self.record.result)
+        self.app.update_notation(notation)
         # Eval bar is driven by _record_position_value (fresh inference
         # after every move) and perform_ai_move._on_done (pre-move AI
         # display).  Stored player analysis may be stale, so we skip it.
@@ -268,17 +309,24 @@ class GameController:
             self._handle_illegal_piece(square_id)
 
     def execute_move(self, move: Move, actor: Optional[str] = None) -> None:
+        if self.is_terminal():
+            return
+        self.cancel_ai_job()
+        legal_move = find_move_by_action_id(self.env.legal_moves(), move.action_id)
+        if legal_move != move:
+            self._handle_program_error(self.app._tr("log_action_stale", aid=move.action_id))
+            return
         try:
             observation, info = self.env.step(move.action_id)
         except RuntimeError as exc:
-            self.app.log(self.app._tr("log_exec_fail", error=str(exc)), "error")
-            self.refresh()
+            self._handle_program_error(self.app._tr("log_exec_fail", error=str(exc)))
             return
 
         self.turn_index += 1
         self.last_move = move
         self.action_history.append(move.action_id)
-        self.notation_history.append(make_notation(self.turn_index, move))
+        self.record.moves.append(move)
+        self.record.result = result_code(int(info["game_result"]))
         self.selected_square = None
         self.candidate_moves = []
         actor_label = actor or self.players[opponent_side(self.current_side())].name
@@ -300,6 +348,7 @@ class GameController:
 
     def undo_last_move(self) -> None:
         self.cancel_ai_job()
+        self._accepted_analysis.clear()
         if self._forfeit_winner is not None:
             self.app.log(self.app._tr("log_game_over_btn"), "warn")
             return
@@ -308,7 +357,7 @@ class GameController:
             self.schedule_ai_turn()
             return
 
-        removed_notation = self.notation_history[-1]
+        removed_notation = make_notation(self.turn_index, self.record.moves[-1])
         replay_actions = self.action_history[:-1]
         rebuilt_moves: List[Move] = []
 
@@ -324,7 +373,8 @@ class GameController:
             self.app.log(self.app._tr("log_undo_fail", error=str(exc)), "error")
             self.env.reset()
             self.action_history = []
-            self.notation_history = []
+            self.record.moves.clear()
+            self.record.result = "*"
             self.last_move = None
             self.turn_index = 0
             self._value_history.clear()
@@ -333,9 +383,8 @@ class GameController:
             return
 
         self.action_history = list(replay_actions)
-        self.notation_history = [
-            make_notation(index + 1, move) for index, move in enumerate(rebuilt_moves)
-        ]
+        self.record.moves = rebuilt_moves
+        self.record.result = "*"
         self.turn_index = len(self.action_history)
         self.last_move = rebuilt_moves[-1] if rebuilt_moves else None
         self.selected_square = None
@@ -371,6 +420,7 @@ class GameController:
         self.cancel_ai_job()
 
         replay_actions = self.action_history[:target_ply]
+        self._accepted_analysis.clear()
         rebuilt_moves: List[Move] = []
 
         self.env.reset()
@@ -387,7 +437,8 @@ class GameController:
             )
             self.env.reset()
             self.action_history = []
-            self.notation_history = []
+            self.record.moves.clear()
+            self.record.result = "*"
             self._value_history.clear()
             self.last_move = None
             self.turn_index = 0
@@ -396,9 +447,8 @@ class GameController:
             return
 
         self.action_history = list(replay_actions)
-        self.notation_history = [
-            make_notation(i + 1, m) for i, m in enumerate(rebuilt_moves)
-        ]
+        self.record.moves = rebuilt_moves
+        self.record.result = "*"
         self.turn_index = target_ply
         self.last_move = rebuilt_moves[-1] if rebuilt_moves else None
         self.selected_square = None
@@ -416,17 +466,26 @@ class GameController:
         )
         self.refresh()
 
-    def perform_ai_move(self) -> None:
-        if self.is_terminal():
+    def perform_ai_move(self, *, single_step: bool = False) -> None:
+        if self._closing or self.is_terminal() or (self.ai_paused and not single_step):
             return
         player = self.current_player()
         if player.is_human():
             return
 
-        legal_moves = self.env.legal_moves()
+        if self._ai_task is not None:
+            self._ai_task.cancel_event.set()
+            self._pending_ai_request = single_step
+            return
+
+        snapshot = self.env.clone()
+        legal_moves = snapshot.legal_moves()
         current_side = self.current_side()
         self._ai_generation += 1
-        gen = self._ai_generation
+        task = _AITask(
+            self._ai_generation, current_side, self._position_key(), player, single_step
+        )
+        self._ai_task = task
 
         # Indicate thinking state
         self.app.status_vars["side"].set(
@@ -434,60 +493,101 @@ class GameController:
             + " …"
         )
 
-        # Run the heavy AI computation on a background thread so the
-        # GUI stays responsive during search.
-        result: dict = {}
-
         def _compute() -> None:
             try:
-                chosen = player.choose_move(legal_moves, self.env)
-                analysis = getattr(player, "last_analysis", PlayerAnalysis())
-                result["move"] = chosen
-                result["analysis"] = analysis
-            except Exception as exc:
-                result["error"] = exc
-            self.app.after(0, _on_done)
-
-        def _on_done() -> None:
-            if gen != self._ai_generation:
-                return  # stale — game was reset / paused / undone
-            if self.ai_paused or self.is_terminal():
-                return  # state changed while AI was thinking
-            err = result.get("error")
-            if err is not None:
-                self.app.log(f"AI error: {err}", "error")
-                return
-            move = result.get("move")
-            analysis = result.get("analysis", PlayerAnalysis())
-            if move is None:
-                self.app.log(
-                    self.app._tr("log_no_moves", name=player.name), "warn",
+                chosen = player.choose_move(
+                    legal_moves, snapshot, cancel_event=task.cancel_event
                 )
-                return
-
-            # Show the AI's analysis on the position it was computed for
-            self.app.update_side_move_list(
-                current_side, legal_moves, self.candidate_moves, analysis,
-            )
-            self.app.update_eval_bar(analysis, current_side)
-            self.app.update_search_stats(analysis, current_side)
-            self.app._highlight_active_side(current_side)
-
-            self.execute_move(move, actor=player.name)
+                analysis = getattr(player, "last_analysis", PlayerAnalysis())
+                task.results.put((chosen, analysis, None))
+            except Exception as exc:
+                task.results.put((None, PlayerAnalysis(), exc))
 
         threading.Thread(target=_compute, daemon=True).start()
+        self._ai_poll_job = self.app.after(25, self._poll_ai_result)
+
+    def _position_key(self) -> tuple:
+        observation = self.env.observation()
+        return tuple(observation["squares"]), int(observation["side_to_move"])
+
+    def _poll_ai_result(self) -> None:
+        """Read worker results on the Tk thread; workers never call Tk APIs."""
+        self._ai_poll_job = None
+        task = self._ai_task
+        if self._closing or task is None:
+            return
+        try:
+            move, analysis, error = task.results.get_nowait()
+        except Empty:
+            self._ai_poll_job = self.app.after(25, self._poll_ai_result)
+            return
+
+        self._ai_task = None
+        pending = self._pending_ai_request
+        self._pending_ai_request = None
+        valid = (
+            task.generation == self._ai_generation
+            and not task.cancel_event.is_set()
+            and not self.is_terminal()
+            and task.position == self._position_key()
+            and self.players.get(task.side) is task.player
+            and (not self.ai_paused or task.single_step)
+        )
+        if not valid or isinstance(error, SearchCancelled):
+            self.refresh()
+            if pending is not None:
+                self.perform_ai_move(single_step=pending)
+            return
+        if error is not None:
+            self._handle_program_error(self.app._tr("log_ai_error", error=str(error)))
+            return
+        if move is None:
+            self._handle_program_error(self.app._tr("log_no_moves", name=task.player.name))
+            return
+        if move not in self.env.legal_moves():
+            self._handle_program_error(self.app._tr("log_ai_invalid_move"))
+            return
+
+        self._accepted_analysis[task.side] = analysis
+        self.app.update_side_move_list(
+            task.side, self.env.legal_moves(), self.candidate_moves, analysis,
+        )
+        self.app.update_eval_bar(analysis, task.side)
+        self.app.update_search_stats(analysis, task.side)
+        self.app._highlight_active_side(task.side)
+        self.execute_move(move, actor=task.player.name)
+
+    def _handle_program_error(self, reason: str) -> None:
+        self.cancel_ai_job()
+        self.ai_paused = True
+        self.app.update_pause_button(True)
+        self.selected_square = None
+        self.candidate_moves = []
+        self.app.log(reason, "error")
+        self.refresh()
+        confirmed = self.app.show_forfeit_dialog(reason, self.current_side())
+        if self._closing:
+            return
+        if confirmed:
+            self.forfeit(self.current_side())
+        else:
+            self.app.log(self.app._tr("log_retry_move"), "warn")
+
+    def close(self) -> None:
+        self._closing = True
+        self.cancel_ai_job()
+        if self._ai_poll_job is not None:
+            self.app.after_cancel(self._ai_poll_job)
+            self._ai_poll_job = None
 
     def last_player_analysis(self) -> PlayerAnalysis:
         """Return the analysis data from the last AI move, if any."""
         side = opponent_side(self.current_side())
-        player = self.players.get(side)
-        if player is not None:
-            return getattr(player, "last_analysis", PlayerAnalysis())
-        return PlayerAnalysis()
+        return self._accepted_analysis.get(side, PlayerAnalysis())
 
     def schedule_ai_turn(self) -> None:
         self.cancel_ai_job()
-        if self.ai_paused or self.is_terminal():
+        if self._closing or self.ai_paused or self.is_terminal():
             return
         if self.current_player().is_human():
             return
@@ -498,6 +598,9 @@ class GameController:
             self.app.after_cancel(self.ai_job)
             self.ai_job = None
         self._ai_generation += 1  # invalidate any in-flight AI thread
+        self._pending_ai_request = None
+        if self._ai_task is not None:
+            self._ai_task.cancel_event.set()
 
     def current_side(self) -> int:
         return int(self.env.observation()["side_to_move"])
@@ -516,9 +619,12 @@ class GameController:
         Records the forfeit in the notation, logs it, and marks the
         game as terminal so no further moves can be played.
         """
+        if self.is_terminal():
+            return
         self.cancel_ai_job()
         winner = opponent_side(side)
         self._forfeit_winner = winner
+        self.record.result = result_code(1 if winner == BLACK_SIDE else 2)
         self.selected_square = None
         self.candidate_moves = []
 
@@ -529,10 +635,6 @@ class GameController:
             "side_black" if winner == BLACK_SIDE else "side_white"
         )
 
-        self.turn_index += 1
-        self.notation_history.append(
-            self.app._tr("notation_forfeit", loser=loser_name, winner=winner_name)
-        )
         self.app.log(
             self.app._tr("log_forfeit", loser=loser_name, winner=winner_name),
             "error",
@@ -543,6 +645,13 @@ class GameController:
         if self._forfeit_winner is not None:
             return True
         return self.env.observation()["game_result_name"] != "ongoing"
+
+    @property
+    def notation_history(self) -> List[str]:
+        return self.record.move_lines()
+
+    def record_snapshot(self) -> GameRecord:
+        return self.record.snapshot()
 
     def mode_label(self) -> str:
         kind_black = self.app._tr(f"kind_{self.players[BLACK_SIDE].kind}")
@@ -566,6 +675,8 @@ class GameController:
             if compile_on:
                 flags.append("compile")
             flag_str = f" ({', '.join(flags)})" if flags else ""
+            if kind in {"supervised", "mcts"}:
+                flag_str += f" [device={player.agent.device_obj}]"
             if kind == "supervised":
                 self.app.log(
                     self.app._tr("log_model_loaded", name=player.name,
@@ -582,7 +693,8 @@ class GameController:
 
     def _make_player(self, side: int, kind: str, checkpoint_path: Optional[str] = None,
                      mcts_config_path: Optional[str] = None,
-                     force_fp16: bool = False, force_compile: bool = False):
+                     force_fp16: bool = False, force_compile: bool = False,
+                     device: str = "cpu"):
         side_key = "side_black" if side == BLACK_SIDE else "side_white"
         side_label = self.app._tr(side_key)
         kind_label = self.app._tr(f"kind_{kind}")
@@ -600,6 +712,7 @@ class GameController:
                 checkpoint_path,
                 force_fp16=force_fp16,
                 force_compile=force_compile,
+                device=device,
             )
         if kind == "mcts":
             if not checkpoint_path:
@@ -609,6 +722,7 @@ class GameController:
                 checkpoint_path, mcts_config_path,
                 force_fp16=force_fp16,
                 force_compile=force_compile,
+                device=device,
             )
         return HumanPlayer(self.app._tr("player_name_human", side=side_label))
 
@@ -629,8 +743,11 @@ class GameController:
     def _handle_illegal_piece(self, square_id: int) -> None:
         """Show the illegal-move dialog and act on the user's choice."""
         forfeited = self.app.show_illegal_move_dialog(square_id)
+        if self._closing:
+            return
         if forfeited:
-            return  # forfeit() already handled everything
+            self.forfeit(self.current_side())
+            return
         # User chose to continue — clear selection and keep playing
         self._clear_selection("log_selection_cancel")
 

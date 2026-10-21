@@ -21,6 +21,7 @@ _TRANSLATIONS = {
 
     # ---- Buttons ----
     "btn_new_game":         {"zh": "新建对局",                "en": "New Game"},
+    "btn_export_notation":  {"zh": "导出棋谱",                "en": "Export Record"},
     "btn_restart":          {"zh": "重开本局",                "en": "Restart"},
     "btn_undo":             {"zh": "悔棋",                    "en": "Undo"},
     "btn_rotate":           {"zh": "旋转棋盘",                "en": "Rotate"},
@@ -82,6 +83,15 @@ _TRANSLATIONS = {
     "dialog_prompt":        {"zh": "选择双方决策源",          "en": "Select Players"},
     "dialog_black":         {"zh": "黑方",                    "en": "Black"},
     "dialog_white":         {"zh": "白方",                    "en": "White"},
+    "dialog_first_player":  {"zh": "先手方名称（棋谱）",        "en": "First player (record)"},
+    "dialog_second_player": {"zh": "后手方名称（棋谱）",        "en": "Second player (record)"},
+    "dialog_export_notation": {"zh": "导出 TXT 棋谱",          "en": "Export TXT Record"},
+    "dialog_ft_text":       {"zh": "文本棋谱",                "en": "Text record"},
+    "dialog_export_failed": {"zh": "棋谱导出失败",            "en": "Record Export Failed"},
+    "log_notation_exported": {"zh": "棋谱已导出：{path}",     "en": "Record exported: {path}"},
+    "dialog_device":        {"zh": "模型设备（双方共用）",    "en": "Model device (both sides)"},
+    "dialog_device_unavailable": {"zh": "设备 {device} 当前不可用，请重新选择。",
+                                  "en": "Device {device} is unavailable. Please select another device."},
     "dialog_start":         {"zh": "开始对局",                "en": "Start Game"},
     "dialog_create_fail":   {"zh": "创建对局失败",            "en": "Create Game Failed"},
     "dialog_no_checkpoint": {"zh": "未选择模型",              "en": "No Model Selected"},
@@ -161,21 +171,28 @@ _TRANSLATIONS = {
     "log_need_mcts_ckpt":   {"zh": "{side}MCTS AI需要选择 checkpoint 文件",
                              "en": "{side} MCTS AI needs a checkpoint file"},
     # ---- Illegal move / forfeit dialog ----
-    "dialog_illegal_title":  {"zh": "非法操作",
-                              "en": "Illegal Move"},
-    "dialog_illegal_prompt": {"zh": "当前操作非法：{side} 在 {sq} 号位。\n\n"
-                                    "在正式比赛中，非法操作会被判负。\n"
-                                    "请选择：",
-                              "en": "Illegal move: {side} at #{sq}.\n\n"
-                                    "In formal play, an illegal move\n"
-                                    "will result in forfeiture.\n"
-                                    "Choose:"},
-    "btn_forfeit":           {"zh": "结束对局（判负）",
-                              "en": "Forfeit (Lose)"},
-    "btn_continue_game":     {"zh": "继续对局",
-                              "en": "Continue"},
-    "log_forfeit":           {"zh": "{loser} 因非法操作被判负，{winner} 获胜。",
-                              "en": "{loser} forfeits due to illegal move. {winner} wins."},
+    "dialog_illegal_title":  {"zh": "确认判负",
+                              "en": "Confirm Forfeit"},
+    "dialog_illegal_reason": {"zh": "在 {sq} 号位选择了不可走的棋子或非法落点。",
+                              "en": "An immovable piece or illegal destination was selected at #{sq}."},
+    "dialog_illegal_prompt": {"zh": "{side} 出现非法操作或程序异常：\n{reason}\n\n"
+                                    "点击确定：该方判负，结束对局。\n"
+                                    "点击取消：保持当前局面，重新落子。",
+                              "en": "{side}: illegal operation or program error:\n{reason}\n\n"
+                                    "Confirm: this side forfeits and the game ends.\n"
+                                    "Cancel: keep the position and retry the move."},
+    "btn_forfeit":           {"zh": "确定（判负）",
+                              "en": "Confirm (Forfeit)"},
+    "btn_continue_game":     {"zh": "取消（重新落子）",
+                              "en": "Cancel (Retry Move)"},
+    "log_ai_error":          {"zh": "AI 程序异常：{error}",
+                              "en": "AI program error: {error}"},
+    "log_ai_invalid_move":   {"zh": "AI 返回的走法在当前局面中不合法。",
+                              "en": "AI returned a move that is not legal in the current position."},
+    "log_retry_move":        {"zh": "已取消判负，请重新落子；AI 可点击“AI走一步”重试。",
+                              "en": "Forfeit cancelled. Retry the move; use AI Step to retry an AI move."},
+    "log_forfeit":           {"zh": "已确认 {loser} 判负，{winner} 获胜。",
+                              "en": "Confirmed: {loser} forfeits, {winner} wins."},
     "notation_forfeit":      {"zh": "{loser} 判负",
                               "en": "{loser} forfeits"},
 

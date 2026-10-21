@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
 from typing import Dict, List, Optional, Sequence
 
 import torch
@@ -11,10 +12,19 @@ from draughts.agents import AlphaBetaAgent, MCTSAgent, SupervisedAgent
 from draughts.env import EncodedObservationAdapter, StandardDraughtsEnv
 from draughts.mcts import _maybe_autocast
 from draughts.move_encoding import encode_legal_moves, move_to_dict
+from draughts.search_control import check_cancelled
 from draughts_env import DraughtsEnv, Move
 
 from .protocol import PlayerAnalysis
 from .utils import _softmax_list, find_move_by_action_id
+
+
+def available_devices() -> List[str]:
+    """Explicit device identifiers available to this process."""
+    devices = ["cpu"]
+    if torch.cuda.is_available():
+        devices.extend(f"cuda:{index}" for index in range(torch.cuda.device_count()))
+    return devices
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +63,9 @@ class RandomPlayer:
     def is_human(self) -> bool:
         return False
 
-    def choose_move(self, moves: Sequence[Move], env: Optional[DraughtsEnv] = None) -> Optional[Move]:
+    def choose_move(self, moves: Sequence[Move], env: Optional[DraughtsEnv] = None,
+                    *, cancel_event: Optional[Event] = None) -> Optional[Move]:
+        check_cancelled(cancel_event)
         if not moves:
             return None
         self.last_analysis = PlayerAnalysis()
@@ -67,10 +79,11 @@ class SupervisedPlayer:
     kind: str = "supervised"
     force_fp16: bool = False
     force_compile: bool = False
+    device: str = "cpu"
 
     def __post_init__(self) -> None:
         self.agent = SupervisedAgent(
-            self.checkpoint_path, device="cpu",
+            self.checkpoint_path, device=self.device,
             force_fp16=self.force_fp16,
             force_compile=self.force_compile,
         )
@@ -79,7 +92,8 @@ class SupervisedPlayer:
     def is_human(self) -> bool:
         return False
 
-    def choose_move(self, moves: Sequence[Move], env: Optional[DraughtsEnv] = None) -> Optional[Move]:
+    def choose_move(self, moves: Sequence[Move], env: Optional[DraughtsEnv] = None,
+                    *, cancel_event: Optional[Event] = None) -> Optional[Move]:
         if not moves:
             return None
         if env is None:
@@ -88,6 +102,7 @@ class SupervisedPlayer:
             env.observation(),
             moves,
             EncodedObservationAdapter(env),
+            cancel_event=cancel_event,
         )
         self._capture_analysis(moves)
         return find_move_by_action_id(moves, action_id)
@@ -149,14 +164,15 @@ class AlphaBetaPlayer:
     def is_human(self) -> bool:
         return False
 
-    def choose_move(self, moves: Sequence[Move], env: Optional[DraughtsEnv] = None) -> Optional[Move]:
+    def choose_move(self, moves: Sequence[Move], env: Optional[DraughtsEnv] = None,
+                    *, cancel_event: Optional[Event] = None) -> Optional[Move]:
         if not moves:
             return None
         if env is None:
             raise ValueError("AlphaBeta AI需要当前棋局环境")
         wrapped = GuiEnvAdapter(env)
         obs = wrapped.raw_observation()
-        action_id = self.agent.select_action(obs, moves, wrapped)
+        action_id = self.agent.select_action(obs, moves, wrapped, cancel_event=cancel_event)
         self.last_analysis = PlayerAnalysis(
             search_info={"depth": self.agent.config.search_depth},
         )
@@ -171,36 +187,40 @@ class MCTSPlayer:
     kind: str = "mcts"
     force_fp16: bool = False
     force_compile: bool = False
+    device: str = "cpu"
 
     def __post_init__(self) -> None:
         self.agent = MCTSAgent(
             self.checkpoint_path,
             config_path=self.config_path,
-            device="cpu",
+            device=self.device,
             force_fp16=self.force_fp16,
             force_compile=self.force_compile,
         )
-        self._search_env = StandardDraughtsEnv()
         self.last_analysis: PlayerAnalysis = PlayerAnalysis()
 
     def is_human(self) -> bool:
         return False
 
-    def choose_move(self, moves: Sequence[Move], env: Optional[DraughtsEnv] = None) -> Optional[Move]:
+    def choose_move(self, moves: Sequence[Move], env: Optional[DraughtsEnv] = None,
+                    *, cancel_event: Optional[Event] = None) -> Optional[Move]:
+        check_cancelled(cancel_event)
         if not moves:
             return None
         if env is None:
             raise ValueError("MCTS AI需要当前棋局环境")
         obs = env.observation()
         # Mirror the GUI env state into a StandardDraughtsEnv for MCTS search.
-        self._search_env.set_state(
+        search_env = StandardDraughtsEnv()
+        search_env.set_state(
             squares=list(obs["squares"]),
             side_to_move=int(obs["side_to_move"]),
         )
         action_id = self.agent.select_action(
-            self._search_env.raw_observation(),
-            self._search_env.legal_actions(),
-            self._search_env,
+            search_env.raw_observation(),
+            search_env.legal_actions(),
+            search_env,
+            cancel_event=cancel_event,
         )
         self._capture_analysis(moves)
         return find_move_by_action_id(moves, action_id)
@@ -244,15 +264,16 @@ class MCTSPlayer:
         from draughts.mcts import _infer_network
 
         obs = gui_env.observation()
-        self._search_env.set_state(
+        search_env = StandardDraughtsEnv()
+        search_env.set_state(
             squares=list(obs["squares"]),
             side_to_move=int(obs["side_to_move"]),
         )
-        legal_actions = self._search_env.legal_actions()
+        legal_actions = search_env.legal_actions()
         if not legal_actions:
             return None
         _, value = _infer_network(
-            self._search_env, self.agent.model,
+            search_env, self.agent.model,
             legal_actions, self.agent.device_obj,
         )
         return value

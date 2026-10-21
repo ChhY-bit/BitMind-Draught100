@@ -31,6 +31,7 @@ from .fonts import (  # noqa: E402
     _get_bundled_ttf_path,
 )
 from .game_controller import GameController  # noqa: E402
+from .agents_local import available_devices  # noqa: E402
 from .i18n import _tr_static  # noqa: E402
 from .protocol import PlayerAnalysis  # noqa: E402
 from .utils import (  # noqa: E402
@@ -85,7 +86,7 @@ class DraughtsApp(tk.Tk):
 
     def _on_close(self) -> None:
         """Clean up resources before destroying the window."""
-        self.controller.cancel_ai_job()
+        self.controller.close()
         self.destroy()
         _unregister_fonts()
 
@@ -219,6 +220,11 @@ class DraughtsApp(tk.Tk):
         )
         notation_scrollbar.grid(row=0, column=1, sticky="ns")
         self.notation_list.configure(yscrollcommand=notation_scrollbar.set)
+        btn_export = ttk.Button(
+            notation_frame, text=tr("btn_export_notation"), command=self._on_export_notation,
+        )
+        btn_export.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self._i18n_widgets.append(("button", btn_export, "btn_export_notation"))
         self._i18n_widgets.append(("labelframe", notation_frame, "notation_frame"))
 
         # Log (lower half of left panel)
@@ -717,20 +723,62 @@ class DraughtsApp(tk.Tk):
         )
         white_combo.grid(row=2, column=1, sticky="ew", pady=4)
 
+        first_name_var = tk.StringVar(value="先手方")
+        second_name_var = tk.StringVar(value="后手方")
+        for row, key, variable in (
+            (3, "dialog_first_player", first_name_var),
+            (4, "dialog_second_player", second_name_var),
+        ):
+            ttk.Label(frame, text=self._tr(key)).grid(row=row, column=0, sticky="w", pady=4)
+            ttk.Entry(frame, textvariable=variable, width=24).grid(
+                row=row, column=1, sticky="ew", pady=4,
+            )
+
+        devices = available_devices()
+        previous_device = next(
+            (str(player.agent.device_obj) for player in self.controller.players.values()
+             if hasattr(player, "agent") and hasattr(player.agent, "device_obj")),
+            "cpu",
+        )
+        device_var = tk.StringVar(value=previous_device if previous_device in devices else "cpu")
+        ttk.Label(frame, text=self._tr("dialog_device")).grid(
+            row=5, column=0, sticky="w", pady=4,
+        )
+        device_combo = ttk.Combobox(
+            frame, textvariable=device_var, values=devices, state="readonly", width=14,
+        )
+        device_combo.grid(row=5, column=1, sticky="ew", pady=4)
+
         # 推理加速复选框
         fp16_var = tk.BooleanVar(value=False)
         compile_var = tk.BooleanVar(value=False)
         chk_fp16 = ttk.Checkbutton(
             frame, text=self._tr("dialog_fp16"), variable=fp16_var,
         )
-        chk_fp16.grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        chk_fp16.grid(row=6, column=0, columnspan=2, sticky="w", pady=(10, 0))
         chk_compile = ttk.Checkbutton(
             frame, text=self._tr("dialog_compile"), variable=compile_var,
         )
-        chk_compile.grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        chk_compile.grid(row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+        def update_device_options(*_args) -> None:
+            uses_model = any(
+                _kind_label_to_key[value.get()] in {"supervised", "mcts"}
+                for value in (black_var, white_var)
+            )
+            device_combo.configure(state="readonly" if uses_model else "disabled")
+            fp16_available = uses_model and device_var.get().startswith("cuda:")
+            chk_fp16.configure(state="normal" if fp16_available else "disabled")
+            chk_compile.configure(state="normal" if uses_model else "disabled")
+            if not fp16_available:
+                fp16_var.set(False)
+
+        for variable in (black_var, white_var, device_var):
+            variable.trace_add("write", update_device_options)
+        update_device_options()
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=5, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        buttons.grid(row=8, column=0, columnspan=2, sticky="e", pady=(12, 0))
 
         def _needs_checkpoint(kind: str) -> bool:
             return kind in ("supervised", "mcts")
@@ -770,6 +818,9 @@ class DraughtsApp(tk.Tk):
                     checkpoint_paths, mcts_config_paths,
                     force_fp16=fp16_var.get(),
                     force_compile=compile_var.get(),
+                    device=device_var.get(),
+                    first_player=first_name_var.get().strip() or "先手方",
+                    second_player=second_name_var.get().strip() or "后手方",
                 )
             except Exception as exc:
                 messagebox.showerror(self._tr("dialog_create_fail"), str(exc), parent=dialog)
@@ -777,17 +828,18 @@ class DraughtsApp(tk.Tk):
             dialog.destroy()
 
         ttk.Button(buttons, text=self._tr("dialog_start"), command=start_game).pack(side="right")
-        dialog.protocol("WM_DELETE_WINDOW", start_game)
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
         dialog.bind("<Return>", lambda _event: start_game())
         black_combo.focus_set()
         self.wait_window(dialog)
 
     def show_illegal_move_dialog(self, square_id: int) -> bool:
-        """Show a modal dialog when a human clicks an immovable own piece.
+        return self.show_forfeit_dialog(
+            self._tr("dialog_illegal_reason", sq=square_id), self.controller.current_side(),
+        )
 
-        Returns ``True`` if the user chose to forfeit, ``False`` to continue.
-        """
-        side = self.controller.current_side()
+    def show_forfeit_dialog(self, reason: str, side: int) -> bool:
+        """Confirm a forfeit, or cancel and leave the position unchanged."""
         side_name = self._tr("side_black" if side == BLACK_SIDE else "side_white")
 
         result: List[bool] = []  # mutable box to capture the choice
@@ -808,7 +860,7 @@ class DraughtsApp(tk.Tk):
         # propagate to Toplevel children reliably.
         tk.Label(
             frame,
-            text=self._tr("dialog_illegal_prompt", side=side_name, sq=square_id),
+            text=self._tr("dialog_illegal_prompt", side=side_name, reason=reason),
             wraplength=380,
             justify="left",
             font=_font,
@@ -873,10 +925,7 @@ class DraughtsApp(tk.Tk):
 
         self.wait_window(dialog)
 
-        forfeited = len(result) > 0 and result[0]
-        if forfeited:
-            self.controller.forfeit(side)
-        return forfeited
+        return len(result) > 0 and result[0]
 
     def ask_checkpoint_path(self, title: str, parent: tk.Toplevel) -> Optional[str]:
         checkpoint_dir = _PROJECT_ROOT / "trainer" / "checkpoints"
@@ -915,6 +964,27 @@ class DraughtsApp(tk.Tk):
 
     def _on_square_click(self, square_id: int) -> None:
         self.controller.handle_square_click(square_id)
+
+    def _on_export_notation(self) -> None:
+        # Snapshot before opening the file chooser: autoplay may continue
+        # during its nested event loop, but the exported record stays coherent.
+        snapshot = self.controller.record_snapshot()
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            title=self._tr("dialog_export_notation"),
+            defaultextension=".txt",
+            initialfile=f"100格国际跳棋棋谱_{snapshot.played_on:%Y%m%d}.txt",
+            filetypes=((self._tr("dialog_ft_text"), "*.txt"),
+                       (self._tr("dialog_ft_all"), "*")),
+        )
+        if not path:
+            return
+        try:
+            snapshot.write(path)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror(self._tr("dialog_export_failed"), str(exc), parent=self)
+            return
+        self.log(self._tr("log_notation_exported", path=path), "info")
 
     def _on_new_game(self) -> None:
         self.controller.open_new_game_dialog()
