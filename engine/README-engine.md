@@ -2,6 +2,8 @@
 
 `engine/` 是 100 格国际跳棋的底层 C 规则引擎，也是整个项目中**所有棋规逻辑的唯一真源**。Python 训练器与 GUI 均通过 `interface/` 共享库调用此引擎，不在上层重复实现吃子、升王、强制吃子等规则。
 
+本赛事规则及程序支持边界以 [规则说明](../SPEC.md) 为准；本文提供底层 API 与调试工具参考。
+
 ## 架构原则
 
 - **纯规则黑盒**：引擎只负责局面维护、合法动作生成/校验/执行、终局判断。不包含搜索、评估、哈希等 AI 逻辑。
@@ -36,7 +38,7 @@ engine/
   src/board.c               棋盘：初始化、坐标映射、终局判断
   src/move.c                走法：生成、校验、执行、升变
   tests/test_board.c        棋盘单元测试
-  tests/test_moves.c        走法单元测试（27 个测试函数）
+  tests/test_moves.c        走法单元测试
   tests/random_play.c       随机对局压力测试
   tools/board_viewer.c      交互式调试工具（9 个预设场景）
 ```
@@ -58,7 +60,7 @@ engine/
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `squares[50]` | `unsigned char` | 50 个可玩棋位（1-based 编号），值为 `DraughtsPiece` |
+| `squares[50]` | `unsigned char` | 50 个可玩棋位；数组下标 0–49 对应棋位 1–50，值为 `DraughtsPiece` |
 | `side_to_move` | `unsigned char` | 当前行棋方，值为 `DraughtsSide` |
 
 **`DraughtsMove`** — 一个走法
@@ -167,8 +169,9 @@ int draughts_get_game_result(const DraughtsState *state, DraughtsGameResult *res
 | 被吃棋子作为屏障（整着结束前不可跨越） | ✅ |
 | 升王（兵停在对方底线） | ✅ |
 | 路过底线不升变（连跳中途经过底线不停留） | ✅ |
-| 三次重复局面 | ❌ （暂不实现） |
-| 40 步无吃子/无升变和棋 | ❌ （暂不实现） |
+| 双方同意和棋及拒和后的 40 步流程 | 暂未实现，由赛事现场处理 |
+
+不将三次重复或“40 步无吃子/无升变”作为本赛事的自动和棋规则。详见 [胜负与和棋](../SPEC.md#胜负与和棋)。
 
 ## 构建与测试
 

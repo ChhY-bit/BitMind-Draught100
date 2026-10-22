@@ -1,157 +1,108 @@
-# Scripts — 独立应用脚本参考
+# 脚本手册
 
-`scripts/` 包含可独立运行的应用程序。每个脚本有各自的 CLI，调用 `draughts/` 核心库完成特定任务。
+`scripts/` 提供数据生成、重评分、批量对战和数据检查工具。所有示例在项目根目录执行，数据与模型路径需替换为实际文件。
 
-所有脚本需在项目根目录执行：
+比赛界面使用见 [比赛操作手册](../docs/competition.md)；并行运行见 [批量任务手册](../run/README-run.md)。
 
-```bash
-PYTHONPATH=interface:. python3 scripts/<script>.py [args]
-```
+## 对局数据生成
 
----
-
-## `selfplay.py` — 对局数据生成
-
-用两个 Agent 对局，生成 JSONL 训练数据。
+`selfplay.py` 使用两个智能体对局，将局面及训练标签写入 JSONL：
 
 ```bash
-PYTHONPATH=interface:. python3 scripts/selfplay.py
 PYTHONPATH=interface:. python3 scripts/selfplay.py \
-  --black alphabeta --white alphabeta \
-  --alphabeta-depth 3 \
-  --games 50 --max-plies 300 --output data/ab_plus.jsonl --seed 4040
+  --black alphabeta --white alphabeta --alphabeta-depth 3 \
+  --games 50 --opening-random-plies 6 \
+  --max-plies 300 --output data/ab.jsonl --seed 4040
 ```
 
-### 参数
-
-| 参数 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `--config` | path | `scripts/config/selfplay.yaml` | 配置文件，CLI 参数覆盖文件中的值 |
-| `--black` | str | `alphabeta` | 黑方 agent：`random`/`alphabeta`/`supervised`/`mcts` |
-| `--white` | str | `alphabeta` | 白方 agent，同上 |
-| `--games` | int | 100 | 生成局数 |
-| `--max-plies` | int | 300 | 每局最大半回合数 |
-| `--output` | path | `data/selfplay.jsonl` | 输出 JSONL 文件路径 |
-| `--log-interval` | int | 1 | 每隔多少局打印一次进度 |
-| `--seed` | int | 1 | 随机种子 |
-| `--alphabeta-config` | path | none | AlphaBetaAgent 的 YAML 配置 |
-| `--alphabeta-depth` | int | none | 覆盖 AlphaBeta 搜索深度（优先于 YAML 配置中的 `search_depth`） |
-| `--black-checkpoint` | path | none | 黑方 supervised checkpoint |
-| `--white-checkpoint` | path | none | 白方 supervised checkpoint |
-| `--device` | str | auto | 推理设备：`cpu`、`cuda`（= `cuda:0`）、`cuda:1` |
-| `--mcts-config` | path | `draughts/config/mcts_selfplay.yaml` | MCTSAgent 的 YAML 配置（自博弈默认使用探索配置） |
-| `--append` | flag | off | 追加写入 output 文件 |
-| `--auto-output-name` | flag | on | output 已存在时自动生成 `_001`/`_002` 新文件名 |
-
-MCTS 自博弈会自动将 search visit count 分布作为 `policy_target_probs` 写入 JSONL，无需再跑 `search_improve`。
-
-### 探索多样性：两种机制的分工
-
-MCTS 自博弈时，为了让生成的对局数据足够多样化（而非每局走相同的棋），项目提供了两种不同层面的随机性机制，它们作用的位置截然不同：
-
-| 机制 | 作用层面 | 配置参数 | 影响范围 |
-|------|---------|---------|---------|
-| Dirichlet 噪声 | **思考层**（MCTS 内部） | `dirichlet_alpha`、`dirichlet_epsilon` | 干预根节点 prior，影响"怎么搜" |
-| temperature | **决策层**（MCTS 外部） | `temperature` | 干预最终走法选择，影响"怎么选" |
-
-**Dirichlet 噪声**（思考层）：在 MCTS 搜索开始前，将根节点的网络先验概率与 Dirichlet 分布混合（`P_root = (1-ε)×P_net + ε×Dirichlet(α)`）。α<1 时噪声随机"偏爱"少数走法，模拟"棋手偶然的灵光一现"，迫使 MCTS 不要只盯着网络最推荐的那几步棋。由配置文件中的 `add_noise` 控制——自博弈用 `mcts_selfplay.yaml`（开启），评测用 `mcts.yaml`（关闭）。
-
-**temperature**（决策层）：搜索完成后从 visit count 分布中选择最终走法时介入。temperature=0 直接选 visits 最多的走法（评测用 `mcts.yaml`）；temperature>0 时按 `softmax(visits/temperature)` 采样（自博弈用 `mcts_selfplay.yaml`）。
-
-**两者的配合**：Dirichlet 让 MCTS "想得更广"（搜索阶段），temperature 让对局"走得更花"（决策阶段）。项目提供两套开箱即用的配置，自博弈脚本自动加载 `mcts_selfplay.yaml`，评测/GUI 自动加载 `mcts.yaml`。关闭 Dirichlet 噪声有两种等价方式：`add_noise = false` 或 `dirichlet_epsilon = 0.0`。当前项目的开局多样性主要靠 `--opening-random-plies`（前 N 步随机走），详见 [draughts/config/mcts_selfplay.yaml](../draughts/config/mcts_selfplay.yaml) 和 [draughts/config/mcts.yaml](../draughts/config/mcts.yaml)。
-
----
-
-## `search_improve.py` — 搜索改进数据生成
-
-用 AlphaBeta 对已有 JSONL 局面的合法动作重新打分，输出改进后的 policy target。
+MCTS 自博弈示例：
 
 ```bash
-PYTHONPATH=interface:. python3 scripts/search_improve.py \
-  data/alphabeta_selfplay.jsonl \
-  --output data/search_improved.jsonl \
-  --alphabeta-depth 3 --min-score-margin 50 \
-  --max-samples 5000 --seed 2026
+PYTHONPATH=interface:. python3 scripts/selfplay.py \
+  --black mcts --white mcts \
+  --black-checkpoint path/to/model.pt --white-checkpoint path/to/model.pt \
+  --mcts-config draughts/config/mcts_selfplay.yaml \
+  --device cpu --games 50 --output data/mcts.jsonl
 ```
 
-### 参数
+MCTS 搜索访问次数分布自动写入 `policy_target_probs`，可直接用于软标签训练。`--append` 控制追加，`--auto-output-name` 控制目标已存在时自动生成新名称；对应的 `--no-append` 和 `--no-auto-output-name` 显式关闭功能。
 
-| 参数 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `inputs` | path(s) | (必填) | 输入 JSONL 文件或目录，可多个 |
-| `--output` | path | (必填) | 输出 JSONL 文件路径 |
-| `--alphabeta-depth` | int | YAML 默认值 | Teacher AlphaBeta 搜索深度（覆盖 YAML 配置） |
-| `--min-score-margin` | int | 0 | 只保留 best move 与次优 move 分差 ≥ 此值的局面 |
-| `--max-samples` | int | 全部 | 最多输出样本数 |
-| `--position-sample-rate` | float | 1.0 | 从输入中随机抽样的比例（0–1） |
-| `--alphabeta-config` | path | none | 自定义 AlphaBeta 评估参数 YAML |
-| `--log-interval` | int | 100 | 每隔多少样本打印一次进度 |
-| `--seed` | int | 1 | 随机种子 |
+默认应用配置见 [selfplay.yaml](config/selfplay.yaml)。JSONL 是训练数据格式，与 GUI 导出的比赛 TXT 棋谱用途不同。
 
-### 并行化
+## 搜索重评分
 
-单进程 `search_improve.py` 对大样本量会很慢，可用 `run/search_improve.sh` 多进程并行：
+`search_improve.py` 用 AlphaBeta 对已有 JSONL 局面重新评分，生成策略软标签：
 
 ```bash
-INPUT="data/alphabeta" OUTPUT=data/alphabeta/improved_soft.jsonl \
-NUM_WORKERS=8 ALPHABETA_DEPTH=7 ./run/search_improve.sh
+PYTHONPATH=interface:. python3 scripts/search_improve.py data/ab.jsonl \
+  --output data/improved.jsonl --alphabeta-depth 3 \
+  --temperature 100 --min-score-margin 50 --max-samples 5000 --seed 2026
 ```
 
-详见 [run/README-run.md](../run/README-run.md)。
+`--temperature` 控制 AlphaBeta 分数转换成 softmax 标签时的温度。`--min-score-margin` 过滤最优与次优走法分差不足的局面，`--position-sample-rate` 控制输入采样比例。此温度与 MCTS 的访问次数采样温度不是同一处理步骤。
 
----
+## 批量对战
 
-## `arena.py` — 批量对战评测
-
-批量 Agent 对战，统计胜率，支持随机开局。
+`arena.py` 统计双方胜负和运行截断：
 
 ```bash
 PYTHONPATH=interface:. python3 scripts/arena.py \
-  --black supervised --white alphabeta \
-  --black-checkpoint path/to/checkpoint.pt \
-  --games 20 --device cpu
+  --black mcts --white alphabeta \
+  --black-checkpoint path/to/model.pt --alphabeta-depth 6 \
+  --mcts-config draughts/config/mcts.yaml \
+  --games 20 --opening-random-plies 8 --device cpu
 ```
 
-### 参数
+比较模型时分别运行交换先后手的两组，并保留所用模型、配置和原始统计。默认应用配置见 [arena.yaml](config/arena.yaml)。历史胜率只能在相应搜索预算、开局和截断口径下解释。
 
-| 参数 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `--config` | path | `scripts/config/arena.yaml` | 配置文件 |
-| `--black` | str | `random` | 黑方 agent |
-| `--white` | str | `alphabeta` | 白方 agent |
-| `--games` | int | 100 | 评测局数 |
-| `--max-plies` | int | 300 | 每局最大半回合数 |
-| `--log-interval` | int | 20 | 每隔多少局打印一次进度 |
-| `--seed` | int | 1 | 随机种子 |
-| `--opening-random-plies` | int | 0 | 正式评测前随机走多少半回合（打破固定开局） |
-| `--alphabeta-config` | path | none | AlphaBetaAgent YAML 配置 |
-| `--alphabeta-depth` | int | none | 覆盖 AlphaBeta 搜索深度（优先于 YAML 配置中的 `search_depth`） |
-| `--black-checkpoint` | path | none | 黑方 supervised checkpoint |
-| `--white-checkpoint` | path | none | 白方 supervised checkpoint |
-| `--device` | str | auto | 推理设备：`cpu`、`cuda`（= `cuda:0`）、`cuda:1` |
-| `--mcts-config` | path | `draughts/config/mcts.yaml` | MCTSAgent YAML 配置（评测默认使用确定性配置） |
+## 常用对局参数
 
----
+下表适用于 `selfplay.py` 与 `arena.py`；完整支持以各脚本 `--help` 为准。
 
-## `inspect_dataset.py` — 数据质量检查
+| 参数 | 说明 |
+|---|---|
+| `--black` / `--white` | `random`、`alphabeta`、`supervised` 或 `mcts` |
+| `--black-checkpoint` / `--white-checkpoint` | 对应监督模型或 MCTS 的 `.pt` 权重 |
+| `--device` | `cpu`、`cuda` 或 `cuda:N`；不指定时自动选择 |
+| `--config` | 应用默认参数配置，显式 CLI 参数覆盖对应值 |
+| `--games` / `--max-plies` | 局数与单局最大半回合数 |
+| `--opening-random-plies` | 使用随机合法走法的开局半回合数 |
+| `--seed` / `--log-interval` | 随机种子与进度输出间隔 |
+| `--alphabeta-config` / `--alphabeta-depth` | AlphaBeta 配置与深度覆盖 |
+| `--mcts-config` | MCTS 搜索配置；自博弈默认探索配置，arena 默认评测配置 |
+| `--fp16` / `--no-fp16` | 显式启用或关闭 FP16 推理 |
+| `--compile` / `--no-compile` | 显式启用或关闭编译推理 |
 
-检查 JSONL 数据的 schema 版本、字段完整性和分布统计。检查大文件时自动显示进度条。
+`selfplay.py` 还支持 `--alphabeta-depth-black` 和 `--alphabeta-depth-white`，优先于统一的深度参数。
+
+`max_plies` 按半回合计数，只用于限制批量任务运行长度。达到上限的对局在统计中单独记录，不能直接视为赛事和棋。
+
+## MCTS 探索与动作选择
+
+- 根节点噪声混合网络先验与 Dirichlet 分布，改变搜索探索的分支。
+- 温度为 0 时选择访问次数最多的走法，并列时随机选择；温度大于 0 时对访问分布做温度缩放后采样，权重与 `visits ** (1 / temperature)` 成比例。
+- `--opening-random-plies` 在正式使用智能体之前执行随机合法走法。
+
+配置分别见 [mcts_selfplay.yaml](../draughts/config/mcts_selfplay.yaml) 与 [mcts.yaml](../draughts/config/mcts.yaml)。关闭根节点噪声不等于所有随机因素均被消除。
+
+## 数据检查
+
+`inspect_dataset.py` 检查 schema、字段及分布：
 
 ```bash
-PYTHONPATH=interface:. python3 scripts/inspect_dataset.py data/
-PYTHONPATH=interface:. python3 scripts/inspect_dataset.py data/specific.jsonl
-
-# 快速模式：跳过深度校验（observation shape 等），约 2× 加速
+PYTHONPATH=interface:. python3 scripts/inspect_dataset.py data/train.jsonl
 PYTHONPATH=interface:. python3 scripts/inspect_dataset.py --quick data/
-
-# 只看前 1000 条
 PYTHONPATH=interface:. python3 scripts/inspect_dataset.py --max-samples 1000 data/
 ```
 
-### 参数
+`--quick` 跳过较深的形状及一致性检查，不等同于完整验证。`--max-samples` 只检查限定数量，结论不代表整个数据集。
 
-| 参数 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `paths` | path(s) | (必填) | 一个或多个 JSONL 文件或目录 |
-| `--quick` | flag | off | 跳过深度校验（observation shape、action-mask 一致性），大文件约 2× 加速 |
-| `--max-samples` | int | 全部 | 最多检查 N 条样本后停止 |
+## 参数帮助与测试
+
+```bash
+PYTHONPATH=interface:. python3 scripts/selfplay.py --help
+PYTHONPATH=interface:. python3 scripts/search_improve.py --help
+PYTHONPATH=interface:. python3 scripts/arena.py --help
+PYTHONPATH=interface:. python3 scripts/inspect_dataset.py --help
+make scripts-test
+```

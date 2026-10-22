@@ -1,139 +1,104 @@
-# Draughts — 核心 Python 库参考手册
+# 核心 Python 库
 
-`draughts/` 是 100 格国际跳棋项目的核心 Python 库。它封装了 C 规则引擎，提供训练环境、神经网络模型、智能体和数据加载能力。上层 `trainer/`、`scripts/` 和 `gui/` 均依赖此库。
+`draughts/` 为界面、训练器和批量工具提供可复用能力。棋规由 C 引擎实现，经 `interface/` 调用；核心库不依赖上层应用。
 
-## 设计原则
+使用入口见 [项目说明](../README.md)，维护和测试见 [维护与验证](../docs/development.md)。
 
-- **纯库**：所有模块只被 `import`，不包含 `if __name__ == "__main__"` 入口。
-- **依赖单向**：`draughts/` 只依赖下层 `interface/`，不依赖上层 `trainer/` 或 `scripts/`。
-- **规则不上浮**：棋规逻辑封闭在 C 引擎中，Python 端不重实现。
+## 模块
 
-## 模块一览
-
-| 模块 | 职责 | 关键导出 |
+| 模块 | 职责 | 主要接口 |
 |---|---|---|
-| `env.py` | 封装 C 引擎，提供训练环境 | `StandardDraughtsEnv`, `encode_observation` |
-| `move_encoding.py` | 候选动作 → 45 维特征向量 | `encode_legal_moves`, `move_to_dict`, `MOVE_FEATURE_DIM` |
-| `model.py` | 神经网络定义 | `CandidateMoveNet`, `ModelConfig`, `load_model_config` |
-| `agents.py` | 所有智能体类 | 4 个 Agent 类, `make_agent`, `available_agents` |
-| `mcts.py` | MCTS 搜索（PUCT） | `mcts_search`, `MCTSConfig`, `MCTSNode`, `MCTSResult` |
-| `notation.py` | 比赛 TXT 棋谱格式、完整走法记录与原子写入 | `GameRecord`, `format_move_notation`, `format_move_pairs`, `result_code` |
-| `dataset.py` | JSONL 加载、内存缓存、tensor 拼批 | `DraughtsJsonlDataset`, `collate_batch`, `to_torch_batch` |
+| `env.py` | 训练与搜索环境、当前方视角编码 | `StandardDraughtsEnv`, `encode_observation` |
+| `move_encoding.py` | 完整合法走法的 45 维编码 | `encode_legal_moves`, `move_to_dict`, `MOVE_FEATURE_DIM` |
+| `model.py` | 棋盘编码、候选走法评分和局面估值 | `CandidateMoveNet`, `ModelConfig`, `load_model_config` |
+| `agents.py` | 随机、AlphaBeta、监督模型和 MCTS 智能体 | `make_agent`, `available_agents` |
+| `mcts.py` | PUCT 搜索、访问次数与搜索估值 | `mcts_search`, `MCTSConfig`, `MCTSResult` |
+| `search_control.py` | 合作式搜索取消 | `SearchCancelled`, `check_cancelled` |
+| `notation.py` | TXT 棋谱、完整走法记录与文件写入 | `GameRecord`, `format_move_notation`, `format_move_pairs`, `result_code` |
+| `dataset.py` | JSONL 数据加载、批处理及软标签 | `DraughtsJsonlDataset`, `collate_batch`, `to_torch_batch` |
 
-## 依赖层次
+## 环境
 
-```
-move_encoding.py    ← 无内部依赖，纯工具模块
-    │
-model.py            ← 依赖 move_encoding
-    │
-agents.py           ← 依赖 model + move_encoding + interface
-    │
-env.py              ← 依赖 interface（无 draughts 内部依赖）
-    │
-dataset.py          ← 依赖 move_encoding + env
-```
-
-## API 索引
-
-### `draughts.env`
+从项目根目录、带有 `PYTHONPATH=interface:.` 的环境运行以下示例：
 
 ```python
-from draughts.env import StandardDraughtsEnv, encode_observation
+from draughts.env import StandardDraughtsEnv
 
 env = StandardDraughtsEnv()
-env.reset()
-env.step(action_id)          # → (observation, info)
-env.observation()            # → 6×10×10 张量格式
-env.raw_observation()        # → dict（squares, side_to_move, ...）
-env.legal_actions()          # → Sequence[Move]
-env.action_mask()            # → List[int] 长度 512
-env.clone()                  # → StandardDraughtsEnv
-env.set_state(squares, side) # 从原始数据恢复局面
+observation = env.reset()
+moves = env.legal_actions()
+observation, reward, done, info = env.step(moves[0].action_id)
 ```
 
-observation 为 6×10×10 的当前方视角编码（黑方行棋保持原方向，白方行棋自动旋转 180°）。
+| 接口 | 返回或用途 |
+|---|---|
+| `reset()` | 标准初始局面的编码观察值 |
+| `observation()` | 6×10×10 当前方视角编码，以嵌套列表表示 |
+| `raw_observation()` | 原始局面字典，含棋子、行棋方、结果等字段 |
+| `legal_actions()` | 当前局面的 `Move` 列表 |
+| `action_mask()` | 合法动作掩码，默认长度 512，可由 `max_actions` 设置 |
+| `step(action_id)` | `(observation, reward, done, info)` |
+| `clone()` | 独立环境副本 |
+| `set_state(squares, side)` | 从原始棋子数组与行棋方恢复局面 |
 
-### `draughts.move_encoding`
+黑方编码保持标准方向，白方编码旋转 180°。这只用于模型输入，不改变原始 `Move.path`、棋盘或导出棋谱中的固定编号。
+
+注意区分两层接口：`interface.DraughtsEnv.step()` 返回 `(observation, info)`，本层 `StandardDraughtsEnv.step()` 返回四元组。动作的 `action_id` 只在对应局面的合法走法集合中有效，不能当作固定棋谱编号。
+
+## 模型与智能体
 
 ```python
-from draughts.move_encoding import encode_legal_moves, MOVE_FEATURE_DIM
+from draughts.agents import make_agent
 
-# MOVE_FEATURE_DIM = 45
-features = encode_legal_moves(move_dicts, side_to_move)
-# → List[List[float]]  每个动作 45 维
+agent = make_agent('alphabeta', alphabeta_depth=3)
+action_id = agent.select_action(
+    env.raw_observation(), env.legal_actions(), env
+)
 ```
 
-### `draughts.model`
-
-```python
-from draughts.model import CandidateMoveNet, ModelConfig, load_model_config
-
-config = load_model_config("draughts/config/model.yaml")
-model = CandidateMoveNet(config)
-
-# 前向传播
-output = model(observation, move_features, move_mask)
-# → {"policy_logits": Tensor[B, M], "value": Tensor[B]}
-```
-
-架构：CNN 板面编码器（v2: 3 层卷积 + Flatten + 大 FC；v3: 5 层 Conv→BN→ReLU + 全局池化 + 小 FC） + MLP 动作编码器（45→256） + score_head（512+256→1） + value_head（512→256→1 + Tanh）。通过 `use_global_pool` 配置项切换 v2/v3。
-
-### `draughts.agents`
-
-```python
-from draughts.agents import make_agent, available_agents
-
-print(available_agents())
-# ['random', 'alphabeta', 'supervised', 'mcts']
-
-agent = make_agent("alphabeta")  # 使用 YAML 默认深度
-agent = make_agent("alphabeta", alphabeta_depth=3)  # 覆盖为 depth=3
-agent = make_agent("supervised", supervised_checkpoint_path="checkpoint.pt", device="cpu")
-
-action_id = agent.select_action(observation, legal_actions, env)
-```
-
-| Agent | 名称 | 说明 |
+| 名称 | 方式 | 是否需要模型 |
 |---|---|---|
-| `RandomAgent` | `random` | 随机选择合法动作 |
-| `AlphaBetaAgent` | `alphabeta` | Alpha-Beta 搜索（深度通过 `alphabeta_depth` 参数或 YAML 配置） |
-| `SupervisedAgent` | `supervised` | 加载 `CandidateMoveNet` checkpoint，greedy 选择 |
-| `MCTSAgent` | `mcts` | MCTS + PUCT + 网络引导搜索 |
+| `random` | 随机合法动作 | 否 |
+| `alphabeta` | 手工估值与 AlphaBeta 搜索 | 否 |
+| `supervised` | 网络直接选择评分最高的候选动作 | 是 |
+| `mcts` | 网络提供先验和估值，MCTS 搜索后选择动作 | 是 |
 
-### `draughts.dataset`
+`CandidateMoveNet` 接收棋盘、候选动作特征与动作掩码，输出 `policy_logits`（`B×M`）及 `value`（`B`）。默认结构配置见 [model.yaml](config/model.yaml)；加载已有模型时按 checkpoint 保存的 `model_config` 恢复结构，支持既有 v1/v2/v3 模型。
+
+智能体的 `select_action()` 和 `mcts_search()` 接受可选 `cancel_event`。取消时抛出 `SearchCancelled`；检查发生于搜索节点或推理调用之间，不能强行打断单次网络推理。
+
+## 搜索配置
+
+| 配置 | 用途 |
+|---|---|
+| [alphabeta.yaml](config/alphabeta.yaml) | AlphaBeta 深度与评估权重 |
+| [mcts.yaml](config/mcts.yaml) | GUI 与评测，关闭根节点探索噪声，温度为 0 |
+| [mcts_selfplay.yaml](config/mcts_selfplay.yaml) | 自博弈，启用根节点噪声与温度采样 |
+
+温度为 0 时优先选择访问次数最多的动作，访问次数相同的动作间仍可能随机选择，因此不能据此承诺整局完全确定。`batch_size: 1` 为逐次叶子推理，大于 1 启用批量叶子推理。
+
+## 棋谱
 
 ```python
-from draughts.dataset import DraughtsJsonlDataset, collate_batch, to_torch_batch
+from draughts.notation import GameRecord
 
-# 默认启用内存缓存 — 构造时一次性加载全量 JSON，训练时零磁盘 I/O
-dataset = DraughtsJsonlDataset(["data/file1.jsonl", "data/file2.jsonl"])
-loader = DataLoader(dataset, batch_size=32, collate_fn=collate_batch)
+record = GameRecord(first_player='先手方', second_player='后手方')
+# 实际走子后，将对应的完整 Move 对象追加到 record.moves。
+record.write('game.txt')
 ```
 
-`DraughtsJsonlDataset` 默认开启内存缓存（`cache_in_memory=True`），适用于小数据集（< 500 MB）。大数据集务必通过 `--no-cache` 关闭缓存（`cache_in_memory=False`），数据按需从磁盘逐行读取，内存占用几乎可忽略，训练速度几乎不受影响。
+`GameRecord` 保存实际走法、日期、双方名称及结果，支持独立快照。导出使用 UTF-8 BOM 与 CRLF 换行，通过同目录临时文件写入后替换目标。格式与结果约定见 [TXT 棋谱格式](../gui/README-gui.md#txt-棋谱格式)。格式支持不代表已经实现和棋裁定或棋谱导入。
 
-`collate_batch` 在 DataLoader worker 进程内直接将 Python 数据转为 `torch.Tensor`，利用 PyTorch 的共享内存机制传递 batch，避免 pickle 序列化瓶颈。
+## 数据
 
-数据校验改为按需调用：`dataset.validate()` 返回错误列表，日常训练无需启用。
+`DraughtsJsonlDataset` 支持硬标签和 `policy_target_probs` 软标签，`collate_batch` 在 DataLoader worker 中构造张量，`dataset.validate()` 可按需校验数据。
 
-支持数据源权重（`--source` 或 `--source-config`），可按来源分别设置 policy/value loss 权重。
+默认会将 JSONL 记录缓存到内存。大数据集可通过训练器 `--no-cache` 或 `cache_in_memory=False` 按需读取；仍需保存样本索引并消耗批次、预取和 worker 内存，实际开销随数据量与进程数变化。
 
-## 配置
-
-配置 YAML 文件位于 `draughts/config/`：
-
-| 文件 | 加载者 | 说明 |
-|---|---|---|
-| `model.yaml` | `model.py` | 网络结构参数 |
-| `alphabeta.yaml` | `agents.py` | AlphaBeta 搜索深度与评估权重 |
-| `mcts.yaml` | `mcts.py` | MCTS 搜索超参数 — 评测/实战/GUI（确定性，无噪声） |
-| `mcts_selfplay.yaml` | `mcts.py` | MCTS 搜索超参数 — 自博弈（开启探索，增加多样性） |
+训练方法见 [训练手册](../trainer/README-trainer.md)，数据生成与检查见 [脚本手册](../scripts/README-scripts.md)。
 
 ## 测试
 
 ```bash
 make draughts-test
-# 或
-PYTHONPATH=interface:. python3 -m unittest discover -s draughts/tests -p 'test_*.py'
 ```

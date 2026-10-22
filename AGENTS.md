@@ -1,113 +1,66 @@
-# AGENTS.md — 项目导览
+# AGENTS.md — 项目协作约定
 
-## 这是什么
+## 项目定位
 
-**BitMind-Draught100**：100 格国际跳棋 AI。用一个叫 `CandidateMoveNet` 的神经网络给 MCTS 搜索提供"棋感"，让它在有限算力下比纯 AlphaBeta 搜索下得更好。
+**BitMind-Draught100** 是 100 格国际跳棋 AI 与本地对弈软件，使用 `CandidateMoveNet` 引导 MCTS 搜索。当前重点为稳定运行、比赛使用和文档交付，暂不主动开展棋力提升或训练迭代。
+
+面向使用者的入口为 [README.md](README.md) 和 [比赛操作手册](docs/competition.md)，详细目录职责与测试见 [维护与验证](docs/development.md)。
 
 ## 项目地图
 
-```
-README.md                 项目总览、环境搭建、从零上手
-ROADMAP.md                技术路线（三阶段方法）
-SPEC.md                   国际跳棋规则
-PROGRESS.md               各模块当前状态
+| 目录或文件 | 职责 |
+|---|---|
+| `engine/` | C 规则引擎，棋规实现的唯一来源 |
+| `interface/` | C–Python 桥接，生成 `build/libdraughts.so` |
+| `draughts/` | 环境、模型、智能体、MCTS、数据、搜索取消及棋谱库 |
+| `gui/` | Tkinter 界面、对局控制与 TXT 导出 |
+| `scripts/` | 数据生成、重评分、检查及批量对战 |
+| `trainer/` | 监督训练及配置 |
+| `run/` | 并行任务与产出监控 |
+| `SPEC.md` | 赛事规则、固定编号及实现边界 |
+| `PROGRESS.md` | 当前功能与验证范围，链接历史评测 |
+| `ROADMAP.md` | 当前维护方向与暂缓事项 |
+| `docs/archive/` | 历史研究路线及代际评测 |
 
-engine/                   C 规则引擎 — 棋规在此，不在此层之上重复实现规则
-interface/                C→Python 桥接 — 编译为 libdraughts.so，Python 用 ctypes 加载
-draughts/                 核心 Python 库
-  ├── env.py                StandardDraughtsEnv（局面管理、走子、克隆）
-  ├── model.py              CandidateMoveNet（v2/v3 双模架构：CNN 编码器 + policy head + value head）
-  ├── agents.py             所有智能体（4 种，统一通过 make_agent() 创建）
-  ├── mcts.py               MCTS 搜索（PUCT 公式）
-  ├── move_encoding.py      走法 → 固定维度特征向量
-  ├── dataset.py            JSONL 加载、内存缓存、worker 内 tensor 拼批、软标签支持
-  └── config/               YAML 配置（模型结构、搜索参数、评估权重）
-trainer/                  训练入口（train_supervised.py，硬标签/软标签自动兼容）
-run/                      批量并行 shell 脚本
-  ├── selfplay_ab.sh         AlphaBeta 自博弈并行
-  ├── selfplay_cpu.sh        MCTS 自博弈 CPU
-  ├── selfplay_cuda.sh       MCTS 自博弈多卡统一脚本
-  ├── selfplay_cuda0.sh      MCTS 自博弈 GPU 0
-  ├── selfplay_cuda1.sh      MCTS 自博弈 GPU 1
-  ├── search_improve.sh      AlphaBeta 并行重新打分
-  ├── improve_preview.sh     改进预览
-  ├── benchmark.sh           多维度批量评测
-  └── monitor_throughput.sh  自博弈数据产出实时监控看板
-scripts/                  独立应用
-  ├── selfplay.py           对局 → JSONL 数据（支持所有 agent）
-  ├── search_improve.py     AlphaBeta 对已有数据重新打分
-  ├── arena.py              批量对战、统计胜率
-  └── inspect_dataset.py    数据质量检查
-gui/                      Tkinter 棋盘（人机对弈、AI 观战）
-```
-
-**层间关系**：`scripts` / `trainer` → `draughts` → `interface` → `engine`（只向下依赖，不跨层）
+应用层向下依赖核心库、桥接层和引擎，不在上层重复实现棋规，核心库不反向依赖应用。
 
 ## 关键入口
 
-| 做什么 | 怎么走 |
-|--------|--------|
-| 搭环境、编译、验证 | `conda env create -f environment.yml && make interface && make all-python-test` |
-| 看棋盘、下棋 | `PYTHONPATH=interface:. python3 gui/gui.py` |
-| 看棋规 | [SPEC.md](SPEC.md) |
-| 训练新网络 | `PYTHONPATH=interface:. python3 trainer/train_supervised.py <data.jsonl> --no-cache --device cuda` |
-| 评测两个 agent | `PYTHONPATH=interface:. python3 scripts/arena.py --black <a> --white <b> --games 100` |
-| 生成训练数据 | `PYTHONPATH=interface:. python3 scripts/selfplay.py --black <a> --white <b> --output data.jsonl` |
-| 指定 GPU 序号 | `--device cuda:0`（GPU 0）、`--device cuda:1`（GPU 1），或 `CUDA_VISIBLE_DEVICES=1 ... --device cuda` |
-| 各代网络在哪 | `trainer/checkpoints/round<N>/candidate_move_net_best.pt`。注意：`*.pt` 与自博弈 JSONL **不入 git**，只存在于 GPU 训练机本地；仓库工作副本里通常没有。checkpoint 内嵌 `model_config`，v1/v2/v3 加载时各自恢复原架构，可跨代对战 |
-| MCTS 参数在哪 | `draughts/config/mcts_selfplay.yaml`（自博弈）和 `mcts.yaml`（评测/实战） |
-| 加速推理 | 首选 CLI flag：`--fp16`（~1.5-2x）和 `--compile`（~20-40%），无需修改 checkpoint；备选：`model.yaml` 中 `use_fp16: true` + `use_compile: true`；MCTS 再加 `mcts_selfplay.yaml` 中 `batch_size: 4-8`（批量叶子推理，~2-3x；**默认 1 = 关闭**，GPU 自博弈前需手动开启，且要重启进程生效）。v3 架构（~2.9M 参数，`use_global_pool: true`，现为默认）推理速度再快 ~20-40% |
-| 当前网络棋力 | **时效信息，先按"时效规则"一节与用户确认**。快照（2026-09-05）：最新代 r11（v3）头对头 58% 踩线晋升 vs r10；趋势 72→65→58% 逼近平台期。AB 锚点已升级 depth=6（r10 87.7% / r11 84.1%，区分相邻代仍靠头对头）；代际详情见 [PROGRESS.md](PROGRESS.md) 的自博弈代际时间线 |
+| 用途 | 入口 |
+|---|---|
+| 安装 | `conda env create -f environment.yml`，然后 `conda activate draughts` |
+| 编译 | `make interface` |
+| 启动棋盘 | `PYTHONPATH=interface:. python3 gui/gui.py` |
+| 完整规定测试 | `make test && make interface-test && make all-python-test` |
+| 训练、数据与评测 | [训练手册](trainer/README-trainer.md)、[脚本手册](scripts/README-scripts.md) |
+| MCTS 配置 | `draughts/config/mcts.yaml` 用于 GUI/评测；`mcts_selfplay.yaml` 用于自博弈 |
+| 模型文件 | 约定路径 `trainer/checkpoints/round<N>/candidate_move_net_best.pt`；权重和生成数据不入 Git，通常仅在训练机上 |
+| 当前网络棋力 | **须先按时效规则与用户核实。** 历史快照（2026-09-05）：r11（v3）对 r10 头对头 58%；AB depth=6 下 r10 为 87.7%、r11 为 84.1%。详见 [历史代际时间线](docs/archive/research-progress.md#自博弈代际时间线2026-09-实测)，不据此推断当前参赛模型 |
 
-## 常用命令速查
+## 时效规则：棋力信息必须核实与回写
 
-```bash
-# 测试（修改代码后必跑）
-make test && make interface-test && make all-python-test
+棋力数字、轮次、架构代际及锚点结论均为时效信息。
 
-# 所有 Python 命令前加
-PYTHONPATH=interface:.
+1. 涉及“当前多强／最新是哪一代／是否换代”时，先说明已有快照日期，主动向用户确认之后的新结果，不把历史数字当现状。
+2. 对话出现新的 benchmark、新代晋升、架构换代、数据规模或锚点结论时，当场同步更新两处：`PROGRESS.md` 的历史评测入口所链接的代际时间线表，以及本文“当前网络棋力”快照，均注明日期。
+3. 历史评测口径：头对头胜率约 55% 为晋升阈值；低于阈值视为平台期。研究恢复时再讨论表征改动，不自动重启训练计划。已有 AB 锚点为 depth=6，depth=3 已饱和；跨深度数字不可比。300 步截断局不计入决胜胜率，但需标注局数。
+4. 不凭仓库中是否存在 `.pt` 或 JSONL 推断训练代际，以用户提供的信息为准；checkpoint 内的 `model_config` 用于恢复原架构。
 
-# MCTS 自博弈（一步产出软标签训练数据；--fp16 --compile 加速推理）
-python3 scripts/selfplay.py --black mcts --white mcts \
-  --black-checkpoint ckpt.pt --white-checkpoint ckpt.pt \
-  --games 2000 --opening-random-plies 6 --device cuda \
-  --mcts-config draughts/config/mcts_selfplay.yaml --fp16 --compile
+## 使用与规则约定
 
-# 从头训练（Phase 3 标准做法，不 resume）
-python3 trainer/train_supervised.py data.jsonl --no-cache --epochs 10 --device cuda
+- 以用户指定的赛事规程和 [SPEC.md](SPEC.md) 为准，黑方先手，棋谱使用固定 1–50 编号。
+- 非法操作、不可走操作和 AI 异常保留判负确认：确定判负，取消保留局面、重新落子。
+- 拒和后的 40 步流程暂缓实现，不改成无吃子自动和棋。
+- TXT 导出已实现；导入、PDN 与自动恢复见维护范围，不表述为现有功能。
+- 双方名称默认“先手方”“后手方”；先手胜 `1-0`，后手胜 `0-1`，按实际结果输出。
+- 历史性能数字与实验待办不得作为当前能力或运行要求宣传。
 
-# MCTS vs AlphaBeta 评测（评测场景不推荐 --fp16，追求最高精度；--compile 可开）
-python3 scripts/arena.py --black mcts --white alphabeta \
-  --black-checkpoint ckpt.pt --alphabeta-depth 3 --games 100 --device cuda
-```
+## 代码约定
 
-## 给用户当导游
-
-被问到项目相关问题时，用以下信息作答：
-
-- **"能下棋吗"** → 能。编译后 `python3 gui/gui.py` 即可打开棋盘界面。
-- **"怎么训练自己的 AI"** → 先跑 selfplay 生成数据，再跑 train_supervised 训练网络。
-- **"现在棋力怎么样"** → 文档记载可能已过时：先说明 PROGRESS.md 时间线表所标注的快照日期，再向用户确认之后是否出了新的评测结果（见"时效规则"一节）。截至 2026-09：v3 网络（r10）对 AB@depth3 已 ≈95%+，评测晋升标准是头对头 vs 上一代。
-- **"怎么让它变更强"** → Phase 3 自博弈闭环：网络越强 → MCTS 越准 → 生成数据越好 → 训练出新网络更强 → 循环。提高 num_simulations 可直接增强棋力。
-- **"规则是什么"** → 国际跳棋，10×10 棋盘，强制吃子、最多吃子、升王。详见 [SPEC.md](SPEC.md)。
-- **"依赖重吗"** → 极轻。唯一外部依赖是 PyTorch，其他全部标准库。
-- **"各个文档的关系"** → README 是总入口，SPEC 是规则，ROADMAP 是方法路线，PROGRESS 是当前状态，各子目录 README 是模块手册。
-
-## 时效规则：棋力信息必须主动核实与回写
-
-本文档与 PROGRESS.md 中的**棋力数字、轮次编号、架构代际、锚点结论都是易腐信息**，用户会持续自博弈迭代出新代。AI 助手须遵守：
-
-1. **答前先核实**：涉及"当前多强 / 最新是哪一代 / 该不该换代"的问题，先检查文档标注的快照日期，主动向用户确认快照之后是否有新评测结果，不要直接引用旧数字当现状。
-2. **听到即回写**：对话中一旦出现新的 benchmark 结果、新代晋升、架构换代、数据集规模变化、锚点结论变化——**当场同步回写两处**：PROGRESS.md 的代际时间线表 + 本文档"当前网络棋力"行的快照（含日期）。不等用户提醒。
-3. **回写口径**：头对头胜率 ≥~55% 判晋升、跌破判平台期（触发表征级改动）；AB 锚点现为 depth=6（d=3 已饱和弃用），注意 AB 数字跨深度不可比；头对头中 300 步截断局不计入决胜胜率，但需如实标注局数。
-4. **checkpoint/数据不在仓库**：`*.pt` 与 JSONL 不入 git，勿凭仓库文件列表推断已训练代际，以用户口述为准。
-
-## 写代码时的约定
-
-- Python 3.10+，文件头加 `from __future__ import annotations`
-- 配置用 YAML，CLI 参数覆盖 YAML 默认值
-- 新功能放 `draughts/`（可复用库）或 `scripts/`（一次性应用）
-- `engine/` 和 `interface/` 是稳定层，只读不改
-- 不引入 PyTorch 以外的第三方库
-- 改完代码就跑测试，测试通过再提交
+- Python 3.10 及以上，新文件加 `from __future__ import annotations`。
+- 配置使用现有 YAML 文件与加载方式，CLI 参数覆盖默认值。
+- 可复用功能放 `draughts/`，独立应用放 `scripts/`。
+- `engine/` 和 `interface/` 是稳定层，只读不改。
+- 不引入 PyTorch 以外的 Python 第三方库。
+- 修改代码后必须运行 `make test && make interface-test && make all-python-test`，测试通过后再提交。
+- 文档整理保持程序行为与默认参数不变，核对链接、命令及实际支持范围。

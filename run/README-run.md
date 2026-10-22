@@ -1,228 +1,84 @@
-# Run — 多进程并行脚本
+# 批量任务手册
 
-`run/` 包含用于批量数据生成的多进程 shell 脚本。每个脚本将大批量对局拆分为多个独立进程并发执行，充分利用多核 CPU 或多 GPU。
+`run/` 使用 shell 脚本并行启动数据生成和评测任务。它们供训练与研究使用，不是比赛界面的启动入口。
 
-所有脚本需在项目根目录执行，内部会自动 `cd` 到根目录。
+从项目根目录运行，先激活已安装依赖的环境并执行 `make interface`。模型与数据不随仓库提供；脚本中保留了训练期的默认路径，运行时应显式传入实际路径和合适的 worker 数。
 
-## 脚本一览
+## 脚本索引
 
-| 脚本 | 用途 | 计算资源 |
-|------|------|---------|
-| `selfplay_ab.sh` | AlphaBeta 自博弈（双深度非对称） | CPU 多核 |
-| `selfplay_cpu.sh` | MCTS 自博弈 — CPU | CPU 多核 |
-| `selfplay_cuda.sh` | **MCTS 自博弈 — 单卡/多卡（推荐）** | 任意 GPU |
-| `selfplay_cuda0.sh` | MCTS 自博弈 — GPU 0 | GPU 0 + CPU |
-| `selfplay_cuda1.sh` | MCTS 自博弈 — GPU 1 | GPU 1 + CPU |
-| `search_improve.sh` | AlphaBeta 并行重新打分（打软标签） | CPU 多核 |
-| `benchmark.sh` | 多维度批量评测 + 汇总报告 | GPU 0 + GPU 1 |
-| `monitor_throughput.sh` | **实时监控数据产出速度** | 仅监控，不占计算资源 |
+| 脚本 | 用途 |
+|---|---|
+| `selfplay_ab.sh` | 多进程 AlphaBeta 数据生成，双方分别使用深度 D 和 D−1，再交换先后手配置 |
+| `selfplay_cpu.sh` | CPU MCTS 自博弈 |
+| `selfplay_cuda.sh` | 调用现有 GPU 0/1 子脚本 |
+| `selfplay_cuda0.sh` / `selfplay_cuda1.sh` | 指定 GPU 的 MCTS 自博弈 |
+| `search_improve.sh` | 合并并分片输入，启动多进程搜索重评分 |
+| `benchmark.sh` | 新旧模型及 AlphaBeta 的双向批量对战 |
+| `monitor_throughput.sh` | 自博弈产出速率监控 |
+| `improve_preview.sh` | 固定默认路径的重评分进度预览 |
 
-> **推荐使用 `selfplay_cuda.sh`** 代替手动 `&` 后台运行。它作为前台脚本运行，Ctrl+C 会同时终止所有 GPU 上的 worker，不会出现「只停了一张卡」的问题。
+各变量的实际默认值以对应脚本为准。`GAMES` 在自博弈脚本中表示每个 worker 的局数，`NUM_WORKERS` 表示进程数；GPU 包装脚本中为每卡进程数。
 
-## 用法
-
-所有参数通过环境变量配置，均有默认值，按需覆盖：
+## 自博弈
 
 ```bash
-# AlphaBeta 自博弈（CPU 多进程）
-ALPHABETA_DEPTH=6 GAMES=2000 NUM_WORKERS=16 OPENING_RANDOM_PLIES=8 \
-  ./run/selfplay_ab.sh
+ALPHABETA_DEPTH=6 NUM_WORKERS=4 GAMES=50 \
+  OUTPUT_DIR=data/selfplay_ab ./run/selfplay_ab.sh
 
-# MCTS 自博弈（单卡）
-CHECKPOINT=trainer/checkpoints/round6/best.pt GAMES=2000 \
-  ./run/selfplay_cuda.sh 0
+CHECKPOINT=path/to/model.pt NUM_WORKERS=2 GAMES=20 \
+  MCTS_CONFIG=draughts/config/mcts_selfplay.yaml \
+  OUTPUT_DIR=data/selfplay_cpu ./run/selfplay_cpu.sh
 
-# MCTS 自博弈（双卡并行）
-CHECKPOINT=trainer/checkpoints/round6/best.pt GAMES=2000 \
-  ./run/selfplay_cuda.sh 0 1
-
-# MCTS 自博弈（CPU，无 GPU 时使用）
-CHECKPOINT=trainer/checkpoints/round5/best.pt \
-  NUM_WORKERS=4 GAMES=200 \
-  ./run/selfplay_cpu.sh
+CHECKPOINT=path/to/model.pt NUM_WORKERS=2 GAMES=50 \
+  FP16=0 COMPILE=0 ./run/selfplay_cuda.sh 0 1
 ```
 
-## 参数
+GPU 包装脚本当前只支持已有 `cuda0` 和 `cuda1` 子脚本，对应参数为 `0`、`1`；不支持直接传入任意 GPU 编号。设备编号按当前进程可见的 CUDA 列表解释。
 
-### selfplay_ab.sh
+常用变量包括 `CHECKPOINT`、`MCTS_CONFIG`、`OUTPUT_DIR`、`NUM_WORKERS`、`GAMES` 和 `BASE_SEED`。GPU 子脚本另有 `FP16` 和 `COMPILE`，以 `0` 关闭、`1` 开启。默认搜索配置为 `mcts_selfplay.yaml`，其中 `batch_size: 1` 表示未启用批量叶子推理。
 
-采用**双深度非对称**策略：前一半 worker 黑强白弱（D vs D-1），后一半白强黑弱（D-1 vs D），打破镜像僵局以减少超时平局。
+worker 日志可能直接输出到终端或写入文件，数据位置以脚本输出为准。任务结束后检查 worker 日志与预期产出，不仅依据包装脚本的结束提示判断所有对局成功完成。Ctrl+C 用于停止前台任务及其 worker。
 
-| 环境变量 | 默认值 | 说明 |
-|---------|--------|------|
-| `ALPHABETA_DEPTH` | 6 | 较强方的搜索深度（较弱方 = D-1） |
-| `OUTPUT_DIR` | `data/selfplay_ab` | JSONL 输出目录 |
-| `NUM_WORKERS` | 8 | 并行进程数（应为偶数，各半分配） |
-| `BASE_SEED` | 7021 | 起始随机种子（各 worker 递增） |
-| `GAMES` | 500 | 每个 worker 生成局数 |
-| `OPENING_RANDOM_PLIES` | 8 | 开局随机半回合数 |
-
-### selfplay_cuda.sh（推荐）
-
-统一管理单卡或多卡自博弈。作为前台脚本运行，**Ctrl+C 会同时终止所有 GPU 上的 worker**，不会出现后台 `&` 运行时只停一张卡的问题。
+## 搜索重评分
 
 ```bash
-./run/selfplay_cuda.sh          # 仅 GPU 0
-./run/selfplay_cuda.sh 0        # 仅 GPU 0
-./run/selfplay_cuda.sh 0 1      # GPU 0 + GPU 1
+INPUT=data/ab.jsonl OUTPUT=data/improved.jsonl \
+  NUM_WORKERS=4 ALPHABETA_DEPTH=7 TEMPERATURE=100 MIN_SCORE_MARGIN=20 \
+  ./run/search_improve.sh
 ```
 
-| 环境变量 | 默认值 | 说明 |
-|---------|--------|------|
-| `CHECKPOINT` | `trainer/checkpoints/round5/...` | 网络权重路径 |
-| `MCTS_CONFIG` | `draughts/config/mcts_selfplay.yaml` | MCTS 搜索配置 |
-| `GAMES` | 500 | 每个 worker 生成局数 |
-| `NUM_WORKERS` | 12 | 每卡并行进程数 |
-| `OUTPUT_DIR` | (每卡独立默认) | 输出根目录（每卡自动追加 `_gpuN` 后缀防冲突） |
-| `BASE_SEED` | 7021 | 起始种子（每卡自动递增 1000） |
+`INPUT` 可以为文件、目录或空格分隔的多个路径；`OUTPUT` 指定合并结果。脚本将输入合并后按行分片，再分别运行 `scripts/search_improve.py`。分片和 worker 输出位于输出路径对应的临时目录，合并结束后清理；具体路径以运行输出为准。
 
-### selfplay_cuda0.sh / selfplay_cuda1.sh
+`improve_preview.sh` 内置默认数据位置，仅适用于该布局。更换输出路径后需根据实际文件查看进度。
 
-单卡脚本，一般不需要直接调用——用 `selfplay_cuda.sh` 即可。仅在需要自定义每卡不同参数时使用。
-
-| 环境变量 | cuda0 默认 | cuda1 默认 | 说明 |
-|---------|-----------|-----------|------|
-| `CHECKPOINT` | `trainer/checkpoints/round5/...` | 同 | 网络权重路径 |
-| `MCTS_CONFIG` | `draughts/config/mcts_selfplay.yaml` | 同 | MCTS 搜索配置（自博弈专用，开启探索） |
-| `OUTPUT_DIR` | `data/selfplay_cuda0` | `data/selfplay_cuda1` | JSONL 输出目录 |
-| `NUM_WORKERS` | 12 | 12 | 并行进程数 |
-| `BASE_SEED` | 7021 | 8021 | 起始随机种子 |
-| `GAMES` | 500 | 500 | 每个 worker 生成局数 |
-
-> **注意**：`selfplay_cuda0.sh` 和 `selfplay_cuda1.sh` 需配合使用，分别绑定 GPU 0 和 GPU 1。单卡环境只跑其中一个即可。
->
-> **关于 MCTS 配置**：项目提供两套开箱即用的配置：
-> - `mcts_selfplay.yaml` — 自博弈专用（`temperature=1.0`, `add_noise=true`），开启探索以增加数据多样性
-> - `mcts.yaml` — 评测/实战/GUI 专用（`temperature=0.0`, `add_noise=false`），追求最强棋力
->
-> 所有自博弈脚本默认使用 `mcts_selfplay.yaml`；所有评测脚本默认使用 `mcts.yaml`。可通过 `MCTS_CONFIG` 环境变量覆盖。
-
-### selfplay_cpu.sh
-
-GPU 不可用时，MCTS 自博弈可退回到 CPU 运行。CPU 上网络推理较慢，建议 worker 数设为总核数的 1/4 ~ 1/2。
-
-| 环境变量 | 默认值 | 说明 |
-|---------|--------|------|
-| `CHECKPOINT` | `trainer/checkpoints/round5/...` | 网络权重路径 |
-| `MCTS_CONFIG` | `draughts/config/mcts_selfplay.yaml` | MCTS 搜索配置（自博弈专用，开启探索） |
-| `OUTPUT_DIR` | `data/selfplay_cpu` | JSONL 输出目录 |
-| `NUM_WORKERS` | 4 | 并行进程数（建议 ≤ 核数/2） |
-| `BASE_SEED` | 9021 | 起始随机种子（各 worker 递增） |
-| `GAMES` | 500 | 每个 worker 生成局数 |
-
-### search_improve.sh
-
-用高等 AlphaBeta 对已有 JSONL 数据重新打分，生成软标签（policy target probabilities）。
-
-采用**按文件数均分**策略：将输入目录/文件下的所有 JSONL 文件收集后，均分给各 worker。文件数少于 worker 数时自动缩减 worker 数。
+## 双向评测
 
 ```bash
-# 基本用法（使用默认参数）
-./run/search_improve.sh
-
-# 自定义参数
-INPUT="data/alphabeta/ab_base data/alphabeta/ab_plus" \
-OUTPUT=data/alphabeta/improved_soft.jsonl \
-NUM_WORKERS=8 \
-ALPHABETA_DEPTH=7 \
-TEMPERATURE=100 \
-MIN_SCORE_MARGIN=0 \
-./run/search_improve.sh
-```
-
-| 环境变量 | 默认值 | 说明 |
-|---------|--------|------|
-| `INPUT` | `data/alphabeta` | 输入 JSONL 文件或目录（空格分隔多个路径） |
-| `OUTPUT` | `data/alphabeta/improved_soft.jsonl` | 合并后的输出 JSONL 路径 |
-| `NUM_WORKERS` | 8 | 并行进程数 |
-| `ALPHABETA_DEPTH` | 7 | Teacher AlphaBeta 搜索深度 |
-| `TEMPERATURE` | 100 | Softmax 温度（越高分布越软） |
-| `MIN_SCORE_MARGIN` | 0 | 最低分数边距（0 = 不过滤，设高可筛除模糊局面） |
-| `BASE_SEED` | 2026 | 起始随机种子（各 worker 递增） |
-
-> **注意**：如果输入只有少量大文件，各 worker 分到的行数可能不均。可先用 `split -n l/<N>` 将大文件按行数拆分为小文件后再跑。
-
-### benchmark.sh
-
-并行跑 6 场对战（3 组 × 正反方向），消除先后手偏差，输出带时间戳的汇总报告。
-
-**三组评测**：
-1. AlphaBeta vs 新网络 MCTS
-2. AlphaBeta vs 旧网络 MCTS
-3. 新网络 MCTS vs 旧网络 MCTS
-
-每组正反各一场（cuda0 正向, cuda1 反向），合计 6 场。
-
-```bash
-# 基本用法
-NEW_CHECKPOINT=trainer/checkpoints/round5/best.pt \
-  OLD_CHECKPOINT=trainer/checkpoints/candidate_move_net_best.pt \
-  ./run/benchmark.sh
-
-# 完整示例
-NEW_CHECKPOINT=trainer/checkpoints/round5/best.pt \
-  OLD_CHECKPOINT=trainer/checkpoints/round4/best.pt \
-  ALPHABETA_DEPTH=3 GAMES=200 \
+NEW_CHECKPOINT=path/to/new_model.pt \
+  OLD_CHECKPOINT=path/to/old_model.pt \
+  ALPHABETA_DEPTH=6 GAMES=50 COMPILE=0 \
   ./run/benchmark.sh
 ```
 
-报告保存在 `run/benchmark_YYYYMMDD_HHMMSS.txt`，包含每场的原始日志和汇总胜率表。
+脚本同时启动六个 arena 任务：新模型对 AlphaBeta、旧模型对 AlphaBeta、新模型对旧模型，各自交换先后手。固定使用两张可见 GPU，每卡三个任务。
 
-> **注意**：6 场 arena 同时在两张 GPU 上跑，每张 GPU 跑 3 个 MCTS 进程。MCTS 搜索本身已消耗显存，3 进程叠加可能导致 OOM。如果显存不足，可降低 `GAMES` 或每卡只跑 1-2 场。
+常用变量为 `NEW_CHECKPOINT`、`OLD_CHECKPOINT`、`ALPHABETA_DEPTH`、`GAMES`、`MCTS_CONFIG`、`OPENING_RANDOM_PLIES`、`MAX_PLIES`、`LOG_INTERVAL`、`SEED`、`REPORT_DIR` 和 `COMPILE`。`GAMES` 是每个方向的局数，同一 `SEED` 传给各场任务。
 
-| 环境变量 | 默认值 | 说明 |
-|---------|--------|------|
-| `NEW_CHECKPOINT` | `trainer/checkpoints/round5/...` | 新网络权重路径 |
-| `OLD_CHECKPOINT` | `trainer/checkpoints/candidate_move_net_best.pt` | 旧网络权重路径 |
-| `ALPHABETA_DEPTH` | 3 | AlphaBeta 搜索深度 |
-| `GAMES` | 100 | 每场对局数（每方向，合计 2×） |
-| `MCTS_CONFIG` | `draughts/config/mcts.yaml` | MCTS 搜索配置（评测专用，确定性选子） |
-| `OPENING_RANDOM_PLIES` | 6 | 开局随机半回合数 |
-| `MAX_PLIES` | 300 | 最大半回合数 |
-| `LOG_INTERVAL` | 20 | arena 日志输出间隔 |
-| `SEED` | 42 | 基准随机种子（各场递增） |
-| `REPORT_DIR` | `run/` | 报告输出目录 |
+报告默认写入 `run/benchmark_YYYYMMDD_HHMMSS.txt`。原始任务日志在脚本创建的临时目录中，报告列出其位置。检查任务是否完成及截断局数后，再解释胜负统计。
 
-### monitor_throughput.sh
+该脚本需要两张 GPU 并发运行。只有单卡、CPU 或显存不足时，按 [脚本手册](../scripts/README-scripts.md#批量对战) 逐项运行 `arena.py`。
 
-实时监控自博弈数据产出速度，终端仪表盘自动刷新。**自动检测**运行中的 selfplay 进程并解析其 `--output` 和 `--device` 参数，按设备（`cpu` / `cuda:0` / `cuda:1`）分组统计产出速率。
+## 产出监控
 
 ```bash
-# 自动检测所有运行中的 selfplay 进程
 ./run/monitor_throughput.sh
-
-# 指定要监控的目录
-./run/monitor_throughput.sh -d data/selfplay_cpu -d data/selfplay_cuda0 -d data/selfplay_cuda1
-
-# 调整采样间隔（默认 10 秒）
+./run/monitor_throughput.sh -d data/selfplay_cpu -d data/selfplay_cuda0
 ./run/monitor_throughput.sh -i 15
-
-# 单次采样（适合脚本调用或 cron）
 ./run/monitor_throughput.sh --once -d data/selfplay_cuda0
 ```
 
-**仪表盘内容**：
+监控会尝试从运行中的 `selfplay.py` 进程发现输出位置，也可用重复的 `-d` 指定目录。显示文件数、样本数、采样增量及速率；`-i` 为采样间隔，`--once` 仅采样一次，`--color` 可设 `auto`、`always` 或 `never`。
 
-| 列 | 说明 |
-|---|------|
-| `SOURCE` | 设备标识（`cpu`、`cuda:0`、`cuda:1` 等） |
-| `FILES` | 该目录下 JSONL 文件数 |
-| `SAMPLES` | 当前总样本数（自动格式化 K/M） |
-| `Δ` | 自上次采样以来新增样本数 |
-| `RATE` | 产出速率（samples/s），绿=正常，黄=偏慢，红=停滞 |
-| `GAMES` | 每 worker 预期局数（自动从进程参数解析） |
+监控以 JSONL 行数估计产出，不判断样本是否合法或模型是否有效。数据验证使用 `scripts/inspect_dataset.py`。
 
-底部还有**速率分布条形图**，直观展示各设备的产出占比。
-
-> **工作原理**：脚本通过 `wc -l` 统计各输出目录下 JSONL 文件的总行数（每行一个样本），按采样间隔计算增量与速率。不修改任何文件，不占用 GPU，可放心在自博弈运行期间使用。
->
-> **自动检测**：扫描 `ps aux` 输出中的 `selfplay.py` 进程，提取 `--output`（数据目录）、`--device`（设备）和 `--games`（局数）参数。进程启停后每约 1 分钟自动刷新源列表。
->
-> **非交互环境**：管道或重定向时自动禁用颜色和清屏，输出为纯文本追加模式。也可通过 `--color never` 强制关闭。
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `-i`, `--interval` | 10 | 采样间隔（秒） |
-| `-d`, `--dir` | (自动检测) | 监控目录（可重复指定多个） |
-| `--once` | off | 单次采样后退出 |
-| `--color` | auto | `always` / `never` / `auto` |
+底层 CLI、参数和截断口径见 [脚本手册](../scripts/README-scripts.md)。历史训练结果见 [归档](../docs/archive/README.md)。
